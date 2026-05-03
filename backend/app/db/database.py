@@ -1,11 +1,14 @@
+import uuid
 from collections.abc import AsyncGenerator
 
 import asyncpg
 from fastapi import Request
 from sqlalchemy.pool import NullPool
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import select
 
 from app.core.config import get_settings
+from app.models.user import User
 
 settings = get_settings()
 
@@ -50,3 +53,24 @@ async def get_db(request: Request):
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
         yield session
+
+
+async def get_or_create_dev_user(session: AsyncSession) -> str:
+    """
+    Get or create the dev user for mock auth.
+    TODO: Remove when real auth is implemented.
+    """
+    existing = await session.execute(
+        select(User).where(User.email == settings.DEV_USER_EMAIL)
+    )
+    user = existing.scalar_one_or_none()
+    if user is not None:
+        return str(user.id)
+
+    user = User(
+        id=uuid.UUID(settings.DEV_USER_ID),
+        email=settings.DEV_USER_EMAIL,
+    )
+    session.add(user)
+    await session.commit()
+    return settings.DEV_USER_ID

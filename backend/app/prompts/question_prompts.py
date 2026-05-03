@@ -24,7 +24,9 @@ Target company:
 Rules:
 - Ask only one question.
 - The question must feel realistic for the target role.
-- Prefer resume-aware questions only when candidate_profile exists; otherwise use JD/role-based questions.
+- If candidate_profile contains real resume information, the question must explicitly anchor to at least one concrete item from it: a recent role, project, technology, achievement, or recommended interview topic.
+- When candidate_profile exists, do not ask a generic warm-up if a resume-specific deep-dive is possible.
+- Otherwise use JD/role-based questions.
 - Avoid generic warm-up questions unless the profile has too little information.
 - Do not include the expected answer in the question.
 - Keep the question speakable for a voice interviewer.
@@ -41,7 +43,6 @@ Return JSON in this exact schema:
   "question_type": "technical" | "behavioral" | "resume_deep_dive" | "system_design" | "testing" | "coding",
   "difficulty": "easy" | "medium" | "hard",
   "expected_focus_areas": string[],
-  "why_this_question": string,
   "time_limit_seconds": number
 }
 """.strip()
@@ -79,7 +80,8 @@ Rules:
 - Increase depth if the candidate is performing well.
 - Reduce complexity if the candidate is struggling.
 - Adaptive difficulty rule: if the previous overall_score >= 7, increase difficulty by one level when appropriate; if overall_score <= 4, reduce difficulty by one level; otherwise maintain the same difficulty.
-- Make the question specific to the resume only when candidate_profile exists; otherwise use JD, target role, or previous answer.
+- If candidate_profile contains real resume information, the question must explicitly reference a concrete resume item and explore a new area from the candidate's background.
+- Otherwise use JD, target role, or previous answer.
 - Keep it natural for voice delivery.
 - The answer should fit within 60–90 seconds.
 
@@ -90,7 +92,6 @@ Return JSON in this exact schema:
   "question_type": "technical" | "behavioral" | "resume_deep_dive" | "system_design" | "testing" | "coding",
   "difficulty": "easy" | "medium" | "hard",
   "expected_focus_areas": string[],
-  "reason_for_selection": string,
   "time_limit_seconds": number
 }
 """.strip()

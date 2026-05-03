@@ -40,28 +40,10 @@ Return JSON in this exact schema:
     "problem_solving": number,
     "role_fit": number
   },
-  "readiness_level": "not_ready" | "needs_practice" | "almost_ready" | "interview_ready",
   "summary": string,
   "strengths": string[],
   "weaknesses": string[],
-  "recommended_topics": string[],
-  "action_plan": [
-    {
-      "priority": "high" | "medium" | "low",
-      "topic": string,
-      "why_it_matters": string,
-      "how_to_improve": string
-    }
-  ],
-  "question_reviews": [
-    {
-      "question_id": string,
-      "sequence": number,
-      "score": number,
-      "feedback_summary": string
-    }
-  ],
-  "final_advice": string
+  "recommended_topics": string[]
 }
 """.strip()
 

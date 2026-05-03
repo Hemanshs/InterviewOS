@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--font-dm-sans), sans-serif;
+  background:
+    radial-gradient(circle at top, rgba(255, 107, 0, 0.08), transparent 28%),
+    linear-gradient(180deg, #090909 0%, #0a0a0a 100%);
+}
+
+h1,
+h2,
+h3,
+.font-mono {
+  font-family: var(--font-dm-mono), monospace;
+}
+
+* {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+::selection {
+  background: rgba(255, 107, 0, 0.35);
+  color: #f5f5f5;
+}

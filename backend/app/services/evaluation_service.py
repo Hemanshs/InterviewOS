@@ -13,8 +13,7 @@ class EvaluationService:
         prompt_version: str,
     ) -> dict:
         """
-        TODO: Call LLM with build_evaluation_prompt(...).
-        Model: gpt-4o-mini for per-answer evaluation.
+        TODO: Call Gemini evaluation pipeline for per-answer evaluation.
         Parse 9 score fields from JSON response.
         prompt_version = get_prompt_version("answer_evaluation")
         """
@@ -31,8 +30,7 @@ class EvaluationService:
         prompt_version: str,
     ) -> dict:
         """
-        TODO: Call LLM with build_final_report_prompt(...).
-        Model: gpt-4o or Claude Sonnet for final report (higher quality).
+        TODO: Call Gemini final-report pipeline with build_final_report_prompt(...).
         prompt_version = get_prompt_version("final_report")
         """
         if USE_MOCK:

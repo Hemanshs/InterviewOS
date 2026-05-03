@@ -121,6 +121,8 @@ Use only the available information:
 - user-provided experience level, if any
 
 If specific candidate background is missing, ask role-based questions instead of resume-based questions.
+Return only the first interview question.
+Do not include rationale, assumptions, strategy notes, or markdown.
 
 Interview type:
 {interview_type}
@@ -146,17 +148,11 @@ User experience level:
 Return JSON in this exact schema:
 
 {
-  "context_mode": "no_resume",
-  "safe_assumptions": string[],
-  "missing_context": string[],
-  "recommended_question_strategy": string[],
-  "first_question_suggestion": {
-    "question_text": string,
-    "question_type": "technical" | "behavioral" | "system_design" | "testing" | "coding",
-    "difficulty": "easy" | "medium" | "hard",
-    "expected_focus_areas": string[],
-    "time_limit_seconds": number
-  }
+  "question_text": string,
+  "question_type": "technical" | "behavioral" | "system_design" | "testing" | "coding",
+  "difficulty": "easy" | "medium" | "hard",
+  "expected_focus_areas": string[],
+  "time_limit_seconds": number
 }
 """.strip()
 

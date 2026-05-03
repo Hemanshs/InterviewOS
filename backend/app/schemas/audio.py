@@ -1,7 +1,16 @@
-from typing import Optional
-from uuid import UUID
+from datetime import datetime
 
 from pydantic import BaseModel
+from uuid import UUID
+
+
+class FillerWordData(BaseModel):
+    count: int
+    examples: list[str] = []
+
+
+class TranscribeLatency(BaseModel):
+    transcription_ms: int
 
 
 class TranscribeData(BaseModel):
@@ -9,7 +18,10 @@ class TranscribeData(BaseModel):
     session_id: UUID
     question_id: UUID
     transcript: str
-    duration_seconds: Optional[int] = None
-    word_count: Optional[int] = None
-    filler_word_count: Optional[int] = None
+    language: str = "en"
+    duration_seconds: int
+    word_count: int
+    filler_words: FillerWordData
     raw_audio_deleted: bool
+    submitted_at: datetime
+    latency: TranscribeLatency
