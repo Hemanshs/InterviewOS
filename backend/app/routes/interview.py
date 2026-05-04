@@ -12,15 +12,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.exceptions import LLMError
 from app.core.security import get_current_user
-from app.db.database import get_async_session, get_or_create_dev_user
+from app.db.database import get_async_session, get_or_create_user
 from app.models.answer import Answer as AnswerModel
 from app.models.question import Question as QuestionModel
 from app.models.report import Report as ReportModel
 from app.models.resume import Resume as ResumeModel
 from app.models.score import Score as ScoreModel
 from app.models.session import Session as SessionModel
+from app.models.user import User as UserModel
 from app.schemas import (
     AudioData,
+    CandidateProfile,
+    CompletedAnswerData,
     ErrorCode,
     ErrorDetail,
     ErrorResponse,
@@ -49,6 +52,7 @@ from app.schemas import (
     StartInterviewRequest,
     SuccessResponse,
     TranscriptItem,
+    TranscribeData,
     not_implemented,
 )
 from app.services.llm_service import LLMService
@@ -216,6 +220,47 @@ def _mock_report() -> dict:
     }
 
 
+def _score_to_evaluation_payload(
+    score: ScoreModel,
+    session_id: UUID,
+    question_id: UUID,
+    answer_id: UUID,
+) -> EvaluateData:
+    feedback_json = score.feedback_json if isinstance(score.feedback_json, dict) else {}
+    return EvaluateData(
+        score_id=score.id,
+        session_id=session_id,
+        question_id=question_id,
+        answer_id=answer_id,
+        scores=EvaluationScores(
+            technical_correctness=score.technical_score,
+            clarity=score.clarity_score,
+            depth=score.depth_score,
+            confidence=score.confidence_score,
+            relevance=score.relevance_score,
+            structure=score.structure_score,
+            communication=score.communication_score,
+            conciseness=score.conciseness_score,
+            example_quality=score.example_quality_score,
+            overall=float(score.overall_score) if score.overall_score is not None else None,
+        ),
+        feedback=EvaluationFeedback(
+            summary=feedback_json.get("summary", score.feedback_text or ""),
+            strengths=list(feedback_json.get("strengths", [])),
+            improvements=list(feedback_json.get("improvements", [])),
+            ideal_answer_points=list(feedback_json.get("ideal_answer_points", [])),
+            missed_points=list(feedback_json.get("missed_points", [])),
+            suggested_better_answer=feedback_json.get("suggested_better_answer", ""),
+        ),
+        follow_up=FollowUp(
+            recommended=False,
+            reason="",
+            question_text=None,
+        ),
+        latency=EvaluationLatency(evaluation_ms=0),
+    )
+
+
 @router.post("/start", response_model=SuccessResponse[SessionData])
 async def start_interview(
     body: StartInterviewRequest,
@@ -233,7 +278,33 @@ async def start_interview(
             ).model_dump(),
         )
 
-    user_id = await get_or_create_dev_user(db)
+    user_id = await get_or_create_user(db, str(current_user))
+    user_result = await db.execute(
+        select(UserModel).where(UserModel.id == UUID(str(current_user)))
+    )
+    user = user_result.scalar_one_or_none()
+    if user is None:
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                error=ErrorDetail(
+                    code=ErrorCode.INTERNAL_ERROR,
+                    message="Authenticated user record could not be created",
+                )
+            ).model_dump(),
+        )
+
+    if str(getattr(user.plan, "value", user.plan)) == "free" and user.free_interview_used:
+        return JSONResponse(
+            status_code=429,
+            content=ErrorResponse(
+                error=ErrorDetail(
+                    code=ErrorCode.RATE_LIMIT_EXCEEDED,
+                    message="You have used your free interview. Upgrade to continue.",
+                    details={"upgrade_required": True},
+                )
+            ).model_dump(),
+        )
 
     if body.resume_id:
         resume_profile = await _load_resume_profile(db, body.resume_id)
@@ -268,7 +339,16 @@ async def start_interview(
         target_company=body.target_company or "",
         job_description=body.job_description or "",
         question_count=body.question_count,
+        voice_enabled=body.voice_enabled,
     )
+
+    if str(getattr(user.plan, "value", user.plan)) == "free":
+        await db.execute(
+            sa_update(UserModel)
+            .where(UserModel.id == UUID(str(current_user)))
+            .values(free_interview_used=True)
+        )
+        await db.commit()
 
     return SuccessResponse(
         data=SessionData(
@@ -283,7 +363,7 @@ async def start_interview(
             status=_status_value(db_session.status),
             started_at=db_session.started_at,
             limits=SessionLimits(
-                max_questions=MAX_QUESTIONS_PER_SESSION,
+                max_questions=db_session.question_count,
                 max_answer_duration_seconds=settings.FREE_MAX_AUDIO_SECONDS,
             ),
             next_action=SessionNextAction(
@@ -306,10 +386,19 @@ async def generate_question(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session),
 ):
-    user_id = await get_or_create_dev_user(db)
+    user_id = await get_or_create_user(db, str(current_user))
     db_session = await session_service.get_session(db, str(body.session_id))
 
     if not db_session:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "success": False,
+                "error": {"code": "SESSION_NOT_FOUND", "message": "Session not found"},
+            },
+        )
+
+    if str(db_session.user_id) != user_id:
         raise HTTPException(
             status_code=404,
             detail={
@@ -342,7 +431,7 @@ async def generate_question(
 
     existing_questions = await session_service.get_questions_for_session(db, str(body.session_id))
     sequence = len(existing_questions) + 1
-    session_question_limit = min(body.question_count, MAX_QUESTIONS_PER_SESSION)
+    session_question_limit = min(db_session.question_count, MAX_QUESTIONS_PER_SESSION)
 
     if sequence > session_question_limit:
         raise HTTPException(
@@ -511,8 +600,18 @@ async def evaluate_answer(
     db: AsyncSession = Depends(get_async_session),
 ):
     start_ms = int(time.time() * 1000)
-    user_id = await get_or_create_dev_user(db)
+    user_id = await get_or_create_user(db, str(current_user))
     db_session = await session_service.get_session(db, str(body.session_id))
+    if db_session and str(db_session.user_id) != user_id:
+        return JSONResponse(
+            status_code=404,
+            content=ErrorResponse(
+                error=ErrorDetail(
+                    code=ErrorCode.SESSION_NOT_FOUND,
+                    message="Session not found",
+                )
+            ).model_dump(),
+        )
 
     question_row = None
     answer_row = None
@@ -605,8 +704,18 @@ async def generate_final_report(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session),
 ):
-    user_id = await get_or_create_dev_user(db)
+    user_id = await get_or_create_user(db, str(current_user))
     db_session = await session_service.get_session(db, str(body.session_id))
+    if db_session and str(db_session.user_id) != user_id:
+        return JSONResponse(
+            status_code=404,
+            content=ErrorResponse(
+                error=ErrorDetail(
+                    code=ErrorCode.SESSION_NOT_FOUND,
+                    message="Session not found",
+                )
+            ).model_dump(),
+        )
 
     if db_session:
         question_rows = await session_service.get_questions_for_session(db, str(body.session_id))
@@ -782,7 +891,7 @@ async def get_history(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session),
 ):
-    user_id = await get_or_create_dev_user(db)
+    user_id = await get_or_create_user(db, str(current_user))
 
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=SESSION_EXPIRY_MINUTES)
     await db.execute(
@@ -830,8 +939,188 @@ async def get_history(
 
 
 @router.get("/{session_id}", response_model=SuccessResponse[SessionDetailData])
-async def get_session(session_id: UUID, current_user=Depends(get_current_user)):
-    return not_implemented()
+async def get_session(
+    session_id: UUID,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    user_id = await get_or_create_user(db, str(current_user))
+    db_session = await session_service.get_session(db, str(session_id))
+    if not db_session or str(db_session.user_id) != user_id:
+        return JSONResponse(
+            status_code=404,
+            content=ErrorResponse(
+                error=ErrorDetail(
+                    code=ErrorCode.SESSION_NOT_FOUND,
+                    message="Session not found",
+                )
+            ).model_dump(),
+        )
+
+    question_rows = await session_service.get_questions_for_session(db, str(session_id))
+    answer_result = await db.execute(
+        select(AnswerModel)
+        .where(AnswerModel.session_id == db_session.id)
+        .order_by(AnswerModel.submitted_at)
+    )
+    answer_rows = list(answer_result.scalars().all())
+    score_result = await db.execute(
+        select(ScoreModel)
+        .where(ScoreModel.session_id == db_session.id)
+        .order_by(ScoreModel.created_at)
+    )
+    score_rows = list(score_result.scalars().all())
+    report_result = await db.execute(
+        select(ReportModel).where(ReportModel.session_id == db_session.id)
+    )
+    report_row = report_result.scalar_one_or_none()
+
+    question_by_id = {str(row.id): row for row in question_rows}
+    answer_by_question_id = {str(row.question_id): row for row in answer_rows}
+    score_by_answer_id = {str(row.answer_id): row for row in score_rows}
+
+    latest_question = question_rows[-1] if question_rows else None
+    latest_answer = (
+        answer_by_question_id.get(str(latest_question.id)) if latest_question else None
+    )
+    latest_score = (
+        score_by_answer_id.get(str(latest_answer.id))
+        if latest_answer is not None
+        else None
+    )
+
+    current_question = None
+    current_transcript = None
+    current_evaluation = None
+
+    if latest_question is not None:
+        current_question = QuestionDetail(
+            question_id=latest_question.id,
+            sequence=latest_question.sequence,
+            type=latest_question.question_type,
+            difficulty=db_session.difficulty,
+            question_text=latest_question.question_text,
+            expected_focus_areas=list(latest_question.expected_focus_areas or []),
+            time_limit_seconds=settings.FREE_MAX_AUDIO_SECONDS,
+            audio=AudioData(
+                enabled=bool(latest_question.audio_url),
+                audio_url=latest_question.audio_url,
+                duration_seconds=None,
+                cached=False,
+            ),
+        )
+
+    if latest_answer is not None:
+        cached = speech_service.get_cached_transcription(str(latest_answer.id))
+        filler_count = latest_answer.filler_word_count or 0
+        current_transcript = TranscribeData(
+            answer_id=latest_answer.id,
+            session_id=db_session.id,
+            question_id=latest_answer.question_id,
+            transcript=latest_answer.transcript or "",
+            language=(cached or {}).get("language", "en"),
+            duration_seconds=latest_answer.duration_seconds or 0,
+            word_count=latest_answer.word_count or 0,
+            filler_words={
+                "count": filler_count,
+                "examples": ((cached or {}).get("filler_words", {}) or {}).get("examples", []),
+            },
+            raw_audio_deleted=latest_answer.raw_audio_deleted,
+            submitted_at=latest_answer.submitted_at,
+            latency={"transcription_ms": (cached or {}).get("latency", {}).get("transcription_ms", 0)},
+        )
+
+    if latest_score is not None and latest_answer is not None:
+        current_evaluation = _score_to_evaluation_payload(
+            latest_score,
+            db_session.id,
+            latest_question.id,
+            latest_answer.id,
+        )
+
+    completed_answers: list[CompletedAnswerData] = []
+    for question_row in question_rows[:-1] if latest_question is not None else question_rows:
+        answer_row = answer_by_question_id.get(str(question_row.id))
+        if answer_row is None:
+            continue
+        score_row = score_by_answer_id.get(str(answer_row.id))
+        if score_row is None:
+            continue
+        evaluation_payload = _score_to_evaluation_payload(
+            score_row,
+            db_session.id,
+            question_row.id,
+            answer_row.id,
+        )
+        completed_answers.append(
+            CompletedAnswerData(
+                questionNumber=question_row.sequence,
+                questionId=str(question_row.id),
+                questionText=question_row.question_text,
+                questionType=question_row.question_type,
+                answerId=str(answer_row.id),
+                transcript=answer_row.transcript or "",
+                wordCount=answer_row.word_count or 0,
+                scores=evaluation_payload.scores.model_dump(),
+                overallScore=evaluation_payload.scores.overall,
+                feedbackSummary=evaluation_payload.feedback.summary,
+                strengths=evaluation_payload.feedback.strengths,
+                improvements=evaluation_payload.feedback.improvements,
+            )
+        )
+
+    final_report = None
+    if report_row is not None:
+        final_report = ReportData(
+            report_id=report_row.id,
+            session_id=report_row.session_id,
+            status="completed",
+            overall_score=float(report_row.overall_score),
+            score_breakdown=ScoreBreakdown(**(report_row.score_breakdown or {})),
+            summary=report_row.summary,
+            strengths=list(report_row.strengths or []),
+            weaknesses=list(report_row.weaknesses or []),
+            recommended_topics=list(report_row.recommended_topics or []),
+            question_reviews=[
+                QuestionReviewItem(**item)
+                for item in list(report_row.question_reviews or [])
+            ],
+            transcript=(
+                [TranscriptItem(**item) for item in list(report_row.transcript or [])]
+                if report_row.transcript
+                else None
+            ),
+            created_at=report_row.created_at,
+        )
+
+    resume_profile = await _load_resume_profile(db, db_session.resume_id)
+
+    return SuccessResponse(
+        data=SessionDetailData(
+            session_id=db_session.id,
+            resume_id=db_session.resume_id,
+            interview_type=db_session.interview_type,
+            difficulty=db_session.difficulty,
+            target_role=db_session.target_role,
+            target_company=db_session.target_company,
+            job_description=db_session.job_description,
+            question_count=db_session.question_count,
+            voice_enabled=db_session.voice_enabled,
+            status=_status_value(db_session.status),
+            started_at=db_session.started_at,
+            expires_at=db_session.expires_at,
+            questions_answered=len(answer_rows),
+            current_sequence=db_session.current_sequence,
+            last_activity_at=db_session.last_activity_at,
+            resume_profile=CandidateProfile(**resume_profile) if resume_profile else None,
+            current_question=current_question,
+            current_transcript=current_transcript,
+            current_evaluation=current_evaluation,
+            completed_answers=completed_answers,
+            final_report=final_report,
+        ),
+        message="Session retrieved",
+    )
 
 
 @router.get("/{session_id}/scorecard", response_model=SuccessResponse[ScorecardData])
@@ -845,7 +1134,7 @@ async def complete_session(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session),
 ):
-    user_id = await get_or_create_dev_user(db)
+    user_id = await get_or_create_user(db, str(current_user))
     db_session = await session_service.get_session(db, str(session_id))
     if not db_session or str(db_session.user_id) != user_id:
         return JSONResponse(

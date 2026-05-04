@@ -14,7 +14,12 @@ class Settings(BaseSettings):
     USE_MOCK_TTS: bool = True
     DATABASE_URL: str
     ALEMBIC_DATABASE_URL: str = ""
-    SUPABASE_JWT_SECRET: str
+    SUPABASE_URL: str = ""
+    SUPABASE_ANON_KEY: str = ""
+    SUPABASE_JWT_SECRET: str = ""
+    AUTH_PROVIDER: str = "supabase"
+    REQUIRE_AUTH: bool = True
+    DEV_AUTH_BYPASS: bool = False
     GEMINI_API_KEY: str = ""
     STT_PROVIDER: str = "gemini"
     LLM_PROVIDER: str = "gemini"
@@ -40,6 +45,8 @@ class Settings(BaseSettings):
         "USE_MOCK_STT",
         "USE_MOCK_LLM",
         "USE_MOCK_TTS",
+        "REQUIRE_AUTH",
+        "DEV_AUTH_BYPASS",
         mode="before",
     )
     @classmethod
@@ -54,7 +61,7 @@ class Settings(BaseSettings):
                 return False
         return value
 
-    @field_validator("STT_PROVIDER", "LLM_PROVIDER", mode="before")
+    @field_validator("STT_PROVIDER", "LLM_PROVIDER", "AUTH_PROVIDER", mode="before")
     @classmethod
     def normalize_provider_values(cls, value):
         if isinstance(value, str):

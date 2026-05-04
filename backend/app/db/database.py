@@ -3,9 +3,9 @@ from collections.abc import AsyncGenerator
 
 import asyncpg
 from fastapi import Request
-from sqlalchemy.pool import NullPool
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.core.config import get_settings
 from app.models.user import User
@@ -55,22 +55,26 @@ async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
-async def get_or_create_dev_user(session: AsyncSession) -> str:
+async def get_or_create_user(
+    session: AsyncSession,
+    user_id: str,
+    email: str | None = None,
+) -> str:
     """
-    Get or create the dev user for mock auth.
-    TODO: Remove when real auth is implemented.
+    Upsert a local user row for the authenticated Supabase user.
     """
-    existing = await session.execute(
-        select(User).where(User.email == settings.DEV_USER_EMAIL)
-    )
+    effective_email = email or f"{user_id}@interviewos.local"
+
+    user_uuid = uuid.UUID(user_id)
+    existing = await session.execute(select(User).where(User.id == user_uuid))
     user = existing.scalar_one_or_none()
     if user is not None:
+        if user.email != effective_email:
+            user.email = effective_email
+            await session.commit()
         return str(user.id)
 
-    user = User(
-        id=uuid.UUID(settings.DEV_USER_ID),
-        email=settings.DEV_USER_EMAIL,
-    )
+    user = User(id=user_uuid, email=effective_email)
     session.add(user)
     await session.commit()
-    return settings.DEV_USER_ID
+    return user_id

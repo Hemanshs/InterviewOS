@@ -4,6 +4,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.schemas.audio import TranscribeData
+from app.schemas.evaluation import EvaluateData, ReportData
+from app.schemas.resume import CandidateProfile
+
 
 class StartInterviewRequest(BaseModel):
     resume_id: Optional[UUID] = None
@@ -122,12 +126,29 @@ class HistoryData(BaseModel):
     pagination: Pagination
 
 
+class CompletedAnswerData(BaseModel):
+    questionNumber: int
+    questionId: str
+    questionText: str
+    questionType: str
+    answerId: str
+    transcript: str
+    wordCount: int
+    scores: dict
+    overallScore: float | None = None
+    feedbackSummary: str
+    strengths: list[str] = []
+    improvements: list[str] = []
+
+
 class SessionDetailData(BaseModel):
     session_id: UUID
+    resume_id: Optional[UUID] = None
     interview_type: str
     difficulty: str
     target_role: Optional[str] = None
     target_company: Optional[str] = None
+    job_description: Optional[str] = None
     question_count: int
     voice_enabled: bool
     status: str
@@ -136,3 +157,9 @@ class SessionDetailData(BaseModel):
     questions_answered: int
     current_sequence: int
     last_activity_at: datetime
+    resume_profile: Optional[CandidateProfile] = None
+    current_question: Optional[QuestionDetail] = None
+    current_transcript: Optional[TranscribeData] = None
+    current_evaluation: Optional[EvaluateData] = None
+    completed_answers: list[CompletedAnswerData] = []
+    final_report: Optional[ReportData] = None

@@ -1,16 +1,17 @@
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import JSONResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.exceptions import ResumeParseError
 from app.core.security import get_current_user
-from app.db.database import get_async_session, get_or_create_dev_user
+from app.db.database import get_async_session, get_or_create_user
 from app.models.resume import Resume as ResumeModel
+from app.models.user import User as UserModel
 from app.schemas.common import ErrorCode, ErrorDetail, ErrorResponse, SuccessResponse
 from app.schemas.resume import CandidateProfile, ResumeLatestData, ResumeUploadData
 from app.services.resume_parser import ResumeParserService
@@ -27,6 +28,7 @@ _resume_store: dict[str, dict] = {}
 )
 async def upload_resume(
     file: UploadFile = File(...),
+    replace_existing: bool = Form(default=False),
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session),
 ):
@@ -82,9 +84,55 @@ async def upload_resume(
         parsed = False
         parse_error = str(exc)
 
+    user_id = await get_or_create_user(db, str(current_user))
+    user_result = await db.execute(
+        select(UserModel).where(UserModel.id == uuid.UUID(str(current_user)))
+    )
+    user = user_result.scalar_one_or_none()
+    if user is None:
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                error=ErrorDetail(
+                    code=ErrorCode.INTERNAL_ERROR,
+                    message="Authenticated user record could not be created",
+                )
+            ).model_dump(),
+        )
+
+    if str(getattr(user.plan, "value", user.plan)) == "free":
+        count_result = await db.execute(
+            select(func.count())
+            .select_from(ResumeModel)
+            .where(
+                ResumeModel.user_id == uuid.UUID(str(current_user)),
+                ResumeModel.deleted_at.is_(None),
+            )
+        )
+        existing_count = int(count_result.scalar() or 0)
+        if existing_count >= 1 and not replace_existing:
+            return JSONResponse(
+                status_code=429,
+                content=ErrorResponse(
+                    error=ErrorDetail(
+                        code=ErrorCode.RATE_LIMIT_EXCEEDED,
+                        message="Free plan allows 1 resume. Delete existing or set replace_existing=true.",
+                    )
+                ).model_dump(),
+            )
+        if existing_count >= 1 and replace_existing:
+            existing_result = await db.execute(
+                select(ResumeModel).where(
+                    ResumeModel.user_id == uuid.UUID(str(current_user)),
+                    ResumeModel.deleted_at.is_(None),
+                )
+            )
+            for existing_resume in list(existing_result.scalars().all()):
+                existing_resume.deleted_at = datetime.now(timezone.utc)
+            await db.commit()
+
     resume_id = uuid.uuid4()
     created_at = datetime.now(timezone.utc)
-    user_id = await get_or_create_dev_user(db)
     user_key = str(user_id)
     db_resume = ResumeModel(
         id=resume_id,
@@ -108,20 +156,29 @@ async def upload_resume(
     _resume_store[user_key] = record
     _resume_store[str(resume_id)] = record
 
-    return SuccessResponse(
-        data=ResumeUploadData(
-            resume_id=resume_id,
-            file_name=filename,
-            file_url=f"/resumes/{resume_id}.pdf",
-            parsed=parsed,
-            profile=profile,
-            created_at=created_at,
-        ),
-        message=(
-            "Resume uploaded and parsed successfully"
-            if parsed
-            else f"Resume uploaded (parsing failed): {parse_error or 'Unknown parsing error'}"
-        ),
+    headers = {
+        "X-RateLimit-Limit": "1",
+        "X-RateLimit-Remaining": "0" if user.free_interview_used else "1",
+    }
+
+    return JSONResponse(
+        status_code=200,
+        headers=headers,
+        content=SuccessResponse(
+            data=ResumeUploadData(
+                resume_id=resume_id,
+                file_name=filename,
+                file_url=f"/resumes/{resume_id}.pdf",
+                parsed=parsed,
+                profile=profile,
+                created_at=created_at,
+            ),
+            message=(
+                "Resume uploaded and parsed successfully"
+                if parsed
+                else f"Resume uploaded (parsing failed): {parse_error or 'Unknown parsing error'}"
+            ),
+        ).model_dump(mode="json"),
     )
 
 
@@ -130,10 +187,11 @@ async def get_latest_resume(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session),
 ):
-    user_id = await get_or_create_dev_user(db)
+    user_id = await get_or_create_user(db, str(current_user))
     result = await db.execute(
         select(ResumeModel)
         .where(ResumeModel.user_id == uuid.UUID(str(user_id)))
+        .where(ResumeModel.deleted_at.is_(None))
         .order_by(ResumeModel.created_at.desc())
         .limit(1)
     )

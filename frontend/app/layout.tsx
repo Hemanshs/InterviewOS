@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { DM_Mono, DM_Sans } from "next/font/google";
 
+import { SupabaseSessionProvider } from "@/lib/supabaseClient";
+
 import "./globals.css";
 
 const dmSans = DM_Sans({
@@ -30,7 +32,7 @@ export default function RootLayout({
       <body
         className={`${dmSans.variable} ${dmMono.variable} bg-[#0a0a0a] text-[#f5f5f5] antialiased`}
       >
-        {children}
+        <SupabaseSessionProvider>{children}</SupabaseSessionProvider>
       </body>
     </html>
   );

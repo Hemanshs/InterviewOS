@@ -539,6 +539,65 @@ class LLMService:
                 break
             current_text = extracted_json
 
+        overall_match = re.search(
+            r'"overall_score"\s*:\s*(-?\d+(?:\.\d+)?)',
+            text,
+            flags=re.DOTALL,
+        )
+        summary_match = re.search(
+            r'"summary"\s*:\s*"((?:[^"\\]|\\.)*)"',
+            text,
+            flags=re.DOTALL,
+        )
+        if overall_match or summary_match:
+            breakdown: dict[str, Any] = {}
+            for key in [
+                "technical",
+                "communication",
+                "confidence",
+                "problem_solving",
+                "role_fit",
+            ]:
+                match = re.search(
+                    rf'"{key}"\s*:\s*(-?\d+(?:\.\d+)?)',
+                    text,
+                    flags=re.DOTALL,
+                )
+                if match:
+                    breakdown[key] = float(match.group(1))
+
+            def _extract_string_array(field_name: str) -> list[str]:
+                match = re.search(
+                    rf'"{field_name}"\s*:\s*\[(.*?)\]',
+                    text,
+                    flags=re.DOTALL,
+                )
+                if not match:
+                    return []
+                inner = match.group(1)
+                values = re.findall(r'"((?:[^"\\]|\\.)*)"', inner, flags=re.DOTALL)
+                return [
+                    bytes(value, "utf-8").decode("unicode_escape").strip()
+                    for value in values
+                    if bytes(value, "utf-8").decode("unicode_escape").strip()
+                ]
+
+            summary = (
+                bytes(summary_match.group(1), "utf-8").decode("unicode_escape").strip()
+                if summary_match
+                else ""
+            )
+            return self._coerce_final_report_result(
+                {
+                    "overall_score": float(overall_match.group(1)) if overall_match else 0.0,
+                    "score_breakdown": breakdown,
+                    "summary": summary,
+                    "strengths": _extract_string_array("strengths"),
+                    "weaknesses": _extract_string_array("weaknesses"),
+                    "recommended_topics": _extract_string_array("recommended_topics"),
+                }
+            )
+
         raise LLMError("Gemini returned invalid JSON for final report generation")
 
     def _coerce_resume_profile_result(self, raw: dict[str, Any]) -> dict[str, Any]:
@@ -924,14 +983,24 @@ class LLMService:
             job_analysis=self._job_analysis_prompt_context(job_analysis),
             interview_type=interview_type,
         )
-        raw = await self._generate_gemini_json(
-            prompt=prompt,
-            purpose="answer evaluation",
-            max_output_tokens=1400,
-            temperature=0.2,
-            thinking_budget=self._MIN_THINKING_BUDGET,
-        )
-        return self._coerce_evaluation_result(raw)
+        try:
+            raw = await self._generate_gemini_json(
+                prompt=prompt,
+                purpose="answer evaluation",
+                max_output_tokens=1400,
+                temperature=0.2,
+                thinking_budget=self._MIN_THINKING_BUDGET,
+            )
+            return self._coerce_evaluation_result(raw)
+        except LLMError:
+            raw_text = await self._generate_gemini_text(
+                prompt=prompt,
+                purpose="answer evaluation",
+                max_output_tokens=1600,
+                temperature=0.2,
+                thinking_budget=self._MIN_THINKING_BUDGET,
+            )
+            return self._coerce_evaluation_result_from_text(raw_text)
     async def generate_final_report(
         self,
         *,
@@ -956,15 +1025,26 @@ class LLMService:
             question_answer_reviews=self._compact_json_text(question_answer_reviews, 900),
             all_scores=self._compact_json_text(all_scores, 700),
         )
-        raw_text = await self._generate_gemini_text(
-            prompt=prompt,
-            purpose="final report generation",
-            model=settings.GEMINI_REPORT_MODEL or settings.GEMINI_MODEL,
-            max_output_tokens=900,
-            temperature=0.25,
-            thinking_budget=self._MIN_THINKING_BUDGET,
-        )
-        return self._coerce_final_report_result_from_text(raw_text)
+        try:
+            raw = await self._generate_gemini_json(
+                prompt=prompt,
+                purpose="final report generation",
+                model=settings.GEMINI_REPORT_MODEL or settings.GEMINI_MODEL,
+                max_output_tokens=900,
+                temperature=0.2,
+                thinking_budget=self._MIN_THINKING_BUDGET,
+            )
+            return self._coerce_final_report_result(raw)
+        except LLMError:
+            raw_text = await self._generate_gemini_text(
+                prompt=prompt,
+                purpose="final report generation",
+                model=settings.GEMINI_REPORT_MODEL or settings.GEMINI_MODEL,
+                max_output_tokens=1000,
+                temperature=0.2,
+                thinking_budget=self._MIN_THINKING_BUDGET,
+            )
+            return self._coerce_final_report_result_from_text(raw_text)
 
     async def analyze_resume(self, resume_text: str) -> dict[str, Any]:
         if settings.USE_MOCK_LLM:

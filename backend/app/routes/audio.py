@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import TranscriptionError
 from app.core.security import get_current_user
-from app.db.database import get_async_session, get_or_create_dev_user
+from app.db.database import get_async_session, get_or_create_user
 from app.schemas.audio import TranscribeData
 from app.schemas.common import ErrorCode, ErrorDetail, ErrorResponse, SuccessResponse
 from app.services.session_service import SessionService
@@ -83,7 +83,7 @@ async def transcribe_audio(
         )
     speech_service.cache_transcription(result)
 
-    user_id = await get_or_create_dev_user(db)
+    await get_or_create_user(db, str(current_user))
     try:
         db_answer = await session_service.create_answer(
             db,

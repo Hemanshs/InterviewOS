@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 from uuid import UUID
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Text, Uuid, func, text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Text, Uuid, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -44,6 +44,16 @@ class Session(Base):
     target_role: Mapped[str | None] = mapped_column(Text, nullable=True)
     target_company: Mapped[str | None] = mapped_column(Text, nullable=True)
     job_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    question_count: Mapped[int] = mapped_column(
+        Integer,
+        server_default=text("5"),
+        nullable=False,
+    )
+    voice_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        nullable=False,
+    )
     status: Mapped[SessionStatusEnum] = mapped_column(
         Enum(SessionStatusEnum),
         server_default=text("'in_progress'"),

@@ -331,3 +331,27 @@ export interface HistoryData {
   items: HistoryItem[];
   pagination: Pagination;
 }
+
+export interface SessionDetailResult {
+  session_id: string;
+  resume_id: string | null;
+  interview_type: InterviewType;
+  difficulty: InterviewDifficulty;
+  target_role: string | null;
+  target_company: string | null;
+  job_description: string | null;
+  question_count: number;
+  voice_enabled: boolean;
+  status: string;
+  started_at: string;
+  expires_at: string | null;
+  questions_answered: number;
+  current_sequence: number;
+  last_activity_at: string;
+  resume_profile: ResumeProfile | null;
+  current_question: QuestionDetail | null;
+  current_transcript: TranscribeResult | null;
+  current_evaluation: EvaluateResult | null;
+  completed_answers: CompletedAnswer[];
+  final_report: FinalReport | null;
+}

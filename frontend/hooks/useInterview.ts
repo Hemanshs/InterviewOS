@@ -7,8 +7,10 @@ import {
   generateFinalReport,
   generateQuestion,
   getInterviewHistory,
+  getInterviewSessionDetail,
   startInterviewSession,
 } from "@/lib/api";
+import { useSupabaseSession } from "@/lib/supabaseClient";
 import type {
   CompletedAnswer,
   EvaluateResult,
@@ -66,6 +68,8 @@ interface InterviewSnapshot {
 }
 
 export function useInterview() {
+  const { configured, loading: authLoading, session: authSession } =
+    useSupabaseSession();
   const [latencyState, setLatencyState] = useState<LatencyStateType>("idle");
   const [question, setQuestion] = useState<QuestionDetail | null>(null);
   const [transcript, setTranscript] = useState<TranscribeResult | null>(null);
@@ -82,6 +86,7 @@ export function useInterview() {
   const [setup, setSetup] = useState<SetupState>(DEFAULT_SETUP);
   const [recoverableSession, setRecoverableSession] = useState<HistoryItem | null>(null);
   const [recoveryChecked, setRecoveryChecked] = useState(false);
+  const [restoringSession, setRestoringSession] = useState(false);
 
   const activeContextLabel = useMemo(() => {
     if (session?.resume_id) {
@@ -132,6 +137,73 @@ export function useInterview() {
     setSetup(snapshot.setup);
   }, []);
 
+  const restoreFromSessionDetail = useCallback(
+    (detail: import("@/types/interview").SessionDetailResult) => {
+      const restoredSession: StartInterviewResult = {
+        session_id: detail.session_id,
+        resume_id: detail.resume_id,
+        interview_type: detail.interview_type,
+        difficulty: detail.difficulty,
+        target_role: detail.target_role,
+        target_company: detail.target_company,
+        voice_enabled: detail.voice_enabled,
+        question_count: detail.question_count,
+        status: detail.status,
+        started_at: detail.started_at,
+        limits: {
+          max_questions: detail.question_count,
+          max_answer_duration_seconds: 60,
+        },
+        next_action: {
+          type: "generate_question",
+          endpoint: "/api/interview/question",
+        },
+        expires_at: detail.expires_at,
+      };
+
+      setSession(restoredSession);
+      setResumeId(detail.resume_id);
+      setResumeProfile(detail.resume_profile);
+      setResumeFileName(detail.resume_profile?.candidate_name ? `${detail.resume_profile.candidate_name}.pdf` : null);
+      setSetup({
+        interviewType: detail.interview_type,
+        difficulty: detail.difficulty,
+        jobDescription: detail.job_description ?? "",
+        targetRole: detail.target_role ?? "",
+        targetCompany: detail.target_company ?? "",
+        questionCount: detail.question_count,
+        voiceEnabled: detail.voice_enabled,
+      });
+      setCompletedAnswers(detail.completed_answers);
+      setQuestionNumber(
+        detail.current_question?.sequence ?? detail.completed_answers.length
+      );
+      setQuestion(detail.current_question);
+      setTranscript(detail.current_transcript);
+      setEvaluation(detail.current_evaluation);
+      setFinalReport(detail.final_report);
+      setError(null);
+
+      if (detail.final_report) {
+        setIsInterviewComplete(true);
+        setLatencyState("scorecard_ready");
+      } else if (detail.current_evaluation) {
+        setIsInterviewComplete(false);
+        setLatencyState("evaluation_ready");
+      } else if (detail.current_transcript) {
+        setIsInterviewComplete(false);
+        setLatencyState("transcript_ready");
+      } else if (detail.current_question) {
+        setIsInterviewComplete(false);
+        setLatencyState("ready_for_answer");
+      } else {
+        setIsInterviewComplete(false);
+        setLatencyState("idle");
+      }
+    },
+    []
+  );
+
   const clearPersistedSession = useCallback(() => {
     if (typeof window === "undefined") {
       return;
@@ -146,12 +218,16 @@ export function useInterview() {
       return;
     }
 
-    const savedSessionId = window.localStorage.getItem(SESSION_ID_STORAGE_KEY);
-    if (!savedSessionId) {
-      window.localStorage.removeItem(SESSION_SNAPSHOT_STORAGE_KEY);
+    if (configured && authLoading) {
+      return;
+    }
+
+    if (configured && !authSession) {
       setRecoveryChecked(true);
       return;
     }
+
+    const savedSessionId = window.localStorage.getItem(SESSION_ID_STORAGE_KEY);
 
     const savedSnapshotRaw = window.localStorage.getItem(
       SESSION_SNAPSHOT_STORAGE_KEY
@@ -163,33 +239,38 @@ export function useInterview() {
           setRecoveryChecked(true);
           return;
         }
-        const match = response.data.items.find(
-          (item) => item.session_id === savedSessionId
-        );
+        const match = savedSessionId
+          ? response.data.items.find((item) => item.session_id === savedSessionId)
+          : response.data.items[0];
         if (match) {
           if (savedSnapshotRaw) {
             try {
               const snapshot = JSON.parse(savedSnapshotRaw) as InterviewSnapshot;
               if (snapshot.session?.session_id === savedSessionId) {
+                setRestoringSession(true);
                 restoreSnapshot(snapshot);
-              } else {
-                setRecoverableSession(match);
+                setRecoverableSession(null);
+                window.requestAnimationFrame(() => {
+                  setRestoringSession(false);
+                  setRecoveryChecked(true);
+                });
+                return;
               }
-            } catch {
-              setRecoverableSession(match);
-            }
-          } else {
-            setRecoverableSession(match);
+            } catch {}
           }
+          setRecoverableSession(match);
+        } else if (!savedSessionId) {
+          window.localStorage.removeItem(SESSION_SNAPSHOT_STORAGE_KEY);
         } else {
           clearPersistedSession();
         }
         setRecoveryChecked(true);
       })
       .catch(() => {
+        setRestoringSession(false);
         setRecoveryChecked(true);
       });
-  }, [clearPersistedSession, restoreSnapshot]);
+  }, [authLoading, authSession, clearPersistedSession, configured, restoreSnapshot]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !recoveryChecked) {
@@ -540,30 +621,31 @@ export function useInterview() {
       return;
     }
 
-    const savedSnapshotRaw = window.localStorage.getItem(
-      SESSION_SNAPSHOT_STORAGE_KEY
-    );
-    if (!savedSnapshotRaw) {
-      setError("Saved interview state is unavailable. Start a new interview.");
-      setLatencyState("error");
-      return;
-    }
-
-    try {
-      const snapshot = JSON.parse(savedSnapshotRaw) as InterviewSnapshot;
-      if (snapshot.session?.session_id !== sessionId) {
-        setError("Saved interview state does not match the recoverable session.");
+    setRestoringSession(true);
+    getInterviewSessionDetail(sessionId)
+      .then((response) => {
+        if (!response.success) {
+          setError(response.error.message);
+          setLatencyState("error");
+          return;
+        }
+        restoreFromSessionDetail(response.data);
+        window.localStorage.setItem(SESSION_ID_STORAGE_KEY, response.data.session_id);
+        setRecoverableSession(null);
+        setError(null);
+      })
+      .catch((err) => {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Saved interview state could not be restored. Start a new interview."
+        );
         setLatencyState("error");
-        return;
-      }
-      restoreSnapshot(snapshot);
-      setRecoverableSession(null);
-      setError(null);
-    } catch {
-      setError("Saved interview state could not be restored. Start a new interview.");
-      setLatencyState("error");
-    }
-  }, [restoreSnapshot]);
+      })
+      .finally(() => {
+        setRestoringSession(false);
+      });
+  }, [restoreFromSessionDetail]);
 
   const reset = useCallback(() => {
     setLatencyState("idle");
@@ -599,6 +681,7 @@ export function useInterview() {
     setup,
     recoverableSession,
     activeContextLabel,
+    restoringSession,
     updateSetup,
     startInterview,
     resumeRecovery,

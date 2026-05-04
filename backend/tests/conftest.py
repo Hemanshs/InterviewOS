@@ -17,6 +17,7 @@ os.environ.setdefault(
 )
 os.environ["DEBUG"] = "False"
 os.environ.setdefault("SUPABASE_JWT_SECRET", "test-secret")
+os.environ.setdefault("DEV_AUTH_BYPASS", "true")
 
 from app.db.base import Base
 from app.db.database import get_async_session

@@ -16,7 +16,8 @@ def configure_voice_test_environment(monkeypatch):
     monkeypatch.setattr(settings, "TTS_CACHE_ENABLED", True)
     monkeypatch.setattr(settings, "ELEVENLABS_API_KEY", "")
     _tts_cache.clear()
-    app.dependency_overrides[get_current_user] = lambda: str(uuid.uuid4())
+    stable_user_id = str(uuid.uuid4())
+    app.dependency_overrides[get_current_user] = lambda: stable_user_id
     yield
     _tts_cache.clear()
     app.dependency_overrides.clear()

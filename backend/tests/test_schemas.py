@@ -56,7 +56,8 @@ def test_evaluate_answer_request_rejects_invalid_uuid():
 
 @pytest.mark.asyncio
 async def test_delete_account_wrong_confirmation_returns_422():
-    app.dependency_overrides[get_current_user] = lambda: str(uuid.uuid4())
+    stable_user_id = str(uuid.uuid4())
+    app.dependency_overrides[get_current_user] = lambda: stable_user_id
     transport = ASGITransport(app=app)
 
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:

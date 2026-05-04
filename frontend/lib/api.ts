@@ -8,29 +8,53 @@ import type {
   HistoryData,
   QuestionResponseData,
   ResumeUploadResult,
+  SessionDetailResult,
   StartInterviewPayload,
   StartInterviewResult,
   TranscribePayload,
   TranscribeResult,
 } from "@/types/interview";
+import { getAccessToken, isSupabaseConfigured } from "@/lib/supabaseClient";
 
-const MOCK_TOKEN = "mock_token_phase_3_1";
+async function getAuthToken(): Promise<string> {
+  const token = await getAccessToken();
+  if (token) {
+    return token;
+  }
+  if (!isSupabaseConfigured) {
+    return "mock_token";
+  }
+  return "";
+}
 
 async function apiFetch<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<ApiResponse<T>> {
+  const token = await getAuthToken();
   const res = await fetch(path, {
     ...options,
     cache: "no-store",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${MOCK_TOKEN}`,
+      Authorization: `Bearer ${token}`,
       ...options.headers,
     },
   });
 
   const raw = (await res.json()) as unknown;
+  if (res.status === 401) {
+    if (typeof window !== "undefined") {
+      window.location.href = "/login";
+    }
+    return {
+      success: false,
+      error: {
+        code: "UNAUTHORIZED",
+        message: "Please log in",
+      },
+    } as ApiResponse<T>;
+  }
   return normalizeApiResponse<T>(raw, res.ok);
 }
 
@@ -116,9 +140,16 @@ export async function getInterviewHistory(
   return apiFetch<HistoryData>(`/api/interview/history${query}`);
 }
 
+export async function getInterviewSessionDetail(
+  sessionId: string
+): Promise<ApiResponse<SessionDetailResult>> {
+  return apiFetch<SessionDetailResult>(`/api/interview/${sessionId}`);
+}
+
 export async function transcribeAudio(
   payload: TranscribePayload
 ): Promise<ApiResponse<TranscribeResult>> {
+  const token = await getAuthToken();
   const formData = new FormData();
   formData.append("session_id", payload.session_id);
   formData.append("question_id", payload.question_id);
@@ -129,7 +160,7 @@ export async function transcribeAudio(
   const res = await fetch("/api/audio/transcribe", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${MOCK_TOKEN}`,
+      Authorization: `Bearer ${token}`,
     },
     body: formData,
   });
@@ -159,13 +190,14 @@ export async function generateFinalReport(
 export async function uploadResume(
   file: File
 ): Promise<ApiResponse<ResumeUploadResult>> {
+  const token = await getAuthToken();
   const formData = new FormData();
   formData.append("file", file);
 
   const res = await fetch("/api/resume/upload", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${MOCK_TOKEN}`,
+      Authorization: `Bearer ${token}`,
     },
     body: formData,
   });

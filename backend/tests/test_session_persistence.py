@@ -87,3 +87,32 @@ async def test_completed_session_not_in_recovery():
     items = response.json()["data"]["items"]
     session_ids = [item["session_id"] for item in items]
     assert session_id not in session_ids
+
+
+@pytest.mark.asyncio
+async def test_get_session_detail_returns_current_question():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        start = await client.post(
+            "/api/interview/start",
+            json={"interview_type": "sde", "difficulty": "medium", "question_count": 5},
+            headers={"Authorization": "Bearer mock_token"},
+        )
+        session_id = start.json()["data"]["session_id"]
+
+        await client.post(
+            "/api/interview/question",
+            json={"session_id": session_id, "mode": "first", "include_voice": False},
+            headers={"Authorization": "Bearer mock_token"},
+        )
+
+        response = await client.get(
+            f"/api/interview/{session_id}",
+            headers={"Authorization": "Bearer mock_token"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["session_id"] == session_id
+    assert data["current_question"] is not None
+    assert data["current_question"]["sequence"] == 1

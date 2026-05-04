@@ -26,6 +26,7 @@ class SessionService:
         target_company: str = "",
         job_description: str = "",
         question_count: int = 5,
+        voice_enabled: bool = True,
     ) -> SessionModel:
         now = datetime.now(timezone.utc)
         session = SessionModel(
@@ -37,6 +38,8 @@ class SessionService:
             target_role=target_role or None,
             target_company=target_company or None,
             job_description=job_description or None,
+            question_count=question_count,
+            voice_enabled=voice_enabled,
             status="in_progress",
             current_sequence=0,
             started_at=now,

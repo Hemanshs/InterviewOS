@@ -506,6 +506,33 @@ def test_llm_final_report_result_from_full_gemini_rest_payload():
     assert result["recommended_topics"] == ["Advanced RESTful API design patterns"]
 
 
+def test_llm_final_report_result_salvages_truncated_json():
+    service = LLMService()
+    result = service._coerce_final_report_result_from_text(
+        """{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "```json\\n{\\n  \\"overall_score\\": 6.8,\\n  \\"score_breakdown\\": {\\n    \\"technical\\": 6.7,\\n    \\"communication\\": 7.1,\\n    \\"confidence\\": 7.5,\\n    \\"problem_solving\\": 7.0,\\n    \\"role_fit\\": 8.5\\n  },\\n  \\"summary\\": \\"Promising candidate with areas for growth.\\",\\n  \\"strengths\\": [\\"Clear communication\\"],\\n  \\"weaknesses\\": [\\"Needs deeper payload design\\"],\\n  \\"recommended_topics\\": [\\"Advanced RESTful API design patterns\\""
+          }
+        ],
+        "role": "model"
+      }
+    }
+  ]
+}"""
+    )
+    assert result["overall_score"] == 6.8
+    assert result["score_breakdown"]["technical"] == 6.7
+    assert result["score_breakdown"]["role_fit"] == 8.5
+    assert result["summary"] == "Promising candidate with areas for growth."
+    assert result["strengths"] == ["Clear communication"]
+    assert result["weaknesses"] == ["Needs deeper payload design"]
+    assert result["recommended_topics"] == []
+
+
 def test_llm_resume_profile_result_from_full_gemini_rest_payload():
     service = LLMService()
     result = service._coerce_resume_profile_result_from_text(

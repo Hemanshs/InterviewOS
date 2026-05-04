@@ -2,6 +2,7 @@
 
 import { AudioPlayer } from "@/components/AudioPlayer";
 import { AnswerReview } from "@/components/AnswerReview";
+import { AuthGuard } from "@/components/AuthGuard";
 import { EvaluationCard } from "@/components/EvaluationCard";
 import { ErrorBox } from "@/components/ErrorBox";
 import { FinalScorecard } from "@/components/FinalScorecard";
@@ -13,9 +14,20 @@ import { RecoveryBanner } from "@/components/RecoveryBanner";
 import { ResumeProfileCard } from "@/components/ResumeProfileCard";
 import { ResumeUploadCard } from "@/components/ResumeUploadCard";
 import { TranscriptCard } from "@/components/TranscriptCard";
+import { UserMenu } from "@/components/UserMenu";
 import { useInterview } from "@/hooks/useInterview";
+import { useSupabaseSession } from "@/lib/supabaseClient";
 
 export default function InterviewPage() {
+  return (
+    <AuthGuard>
+      <InterviewPageContent />
+    </AuthGuard>
+  );
+}
+
+function InterviewPageContent() {
+  const { user } = useSupabaseSession();
   const {
     recoveryChecked,
     latencyState,
@@ -35,6 +47,7 @@ export default function InterviewPage() {
     setup,
     recoverableSession,
     activeContextLabel,
+    restoringSession,
     updateSetup,
     startInterview,
     resumeRecovery,
@@ -57,7 +70,7 @@ export default function InterviewPage() {
     latencyState === "voice_generating" ||
     latencyState === "next_question_loading";
 
-  if (!recoveryChecked) {
+  if (!recoveryChecked || restoringSession) {
     return (
       <main className="flex min-h-screen items-center justify-center px-6 py-12">
         <div className="w-full max-w-2xl space-y-6 text-center">
@@ -80,6 +93,12 @@ export default function InterviewPage() {
   return (
     <main className="flex min-h-screen items-center justify-center px-6 py-12">
       <div className="w-full max-w-2xl space-y-6">
+        {user?.email ? (
+          <div className="flex justify-end">
+            <UserMenu email={user.email} />
+          </div>
+        ) : null}
+
         {recoverableSession && latencyState === "idle" ? (
           <RecoveryBanner
             sessionId={recoverableSession.session_id}
