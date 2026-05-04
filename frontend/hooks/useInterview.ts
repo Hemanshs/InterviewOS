@@ -25,6 +25,8 @@ import type {
 } from "@/types/interview";
 
 const MAX_QUESTIONS = 5;
+const SESSION_ID_STORAGE_KEY = "interviewos_session_id";
+const SESSION_SNAPSHOT_STORAGE_KEY = "interviewos_session_snapshot";
 
 interface SetupState {
   interviewType: InterviewType;
@@ -46,6 +48,23 @@ const DEFAULT_SETUP: SetupState = {
   voiceEnabled: true,
 };
 
+interface InterviewSnapshot {
+  latencyState: LatencyStateType;
+  question: QuestionDetail | null;
+  transcript: TranscribeResult | null;
+  evaluation: EvaluateResult | null;
+  error: string | null;
+  questionNumber: number;
+  completedAnswers: CompletedAnswer[];
+  isInterviewComplete: boolean;
+  finalReport: FinalReport | null;
+  resumeProfile: ResumeProfile | null;
+  resumeId: string | null;
+  resumeFileName: string | null;
+  session: StartInterviewResult | null;
+  setup: SetupState;
+}
+
 export function useInterview() {
   const [latencyState, setLatencyState] = useState<LatencyStateType>("idle");
   const [question, setQuestion] = useState<QuestionDetail | null>(null);
@@ -62,6 +81,7 @@ export function useInterview() {
   const [session, setSession] = useState<StartInterviewResult | null>(null);
   const [setup, setSetup] = useState<SetupState>(DEFAULT_SETUP);
   const [recoverableSession, setRecoverableSession] = useState<HistoryItem | null>(null);
+  const [recoveryChecked, setRecoveryChecked] = useState(false);
 
   const activeContextLabel = useMemo(() => {
     if (session?.resume_id) {
@@ -86,30 +106,138 @@ export function useInterview() {
     []
   );
 
-  useEffect(() => {
+  const restoreSnapshot = useCallback((snapshot: InterviewSnapshot) => {
+    const normalizedLatencyState =
+      snapshot.latencyState === "recording_answer" ||
+      snapshot.latencyState === "uploading_audio" ||
+      snapshot.latencyState === "transcribing_answer"
+        ? snapshot.transcript
+          ? "transcript_ready"
+          : "ready_for_answer"
+        : snapshot.latencyState;
+
+    setLatencyState(normalizedLatencyState);
+    setQuestion(snapshot.question);
+    setTranscript(snapshot.transcript);
+    setEvaluation(snapshot.evaluation);
+    setError(snapshot.error);
+    setQuestionNumber(snapshot.questionNumber);
+    setCompletedAnswers(snapshot.completedAnswers);
+    setIsInterviewComplete(snapshot.isInterviewComplete);
+    setFinalReport(snapshot.finalReport);
+    setResumeProfile(snapshot.resumeProfile);
+    setResumeId(snapshot.resumeId);
+    setResumeFileName(snapshot.resumeFileName);
+    setSession(snapshot.session);
+    setSetup(snapshot.setup);
+  }, []);
+
+  const clearPersistedSession = useCallback(() => {
     if (typeof window === "undefined") {
       return;
     }
+    window.localStorage.removeItem(SESSION_ID_STORAGE_KEY);
+    window.localStorage.removeItem(SESSION_SNAPSHOT_STORAGE_KEY);
+  }, []);
 
-    const savedSessionId = window.localStorage.getItem("interviewos_session_id");
-    if (!savedSessionId) {
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      setRecoveryChecked(true);
       return;
     }
+
+    const savedSessionId = window.localStorage.getItem(SESSION_ID_STORAGE_KEY);
+    if (!savedSessionId) {
+      window.localStorage.removeItem(SESSION_SNAPSHOT_STORAGE_KEY);
+      setRecoveryChecked(true);
+      return;
+    }
+
+    const savedSnapshotRaw = window.localStorage.getItem(
+      SESSION_SNAPSHOT_STORAGE_KEY
+    );
 
     getInterviewHistory("in_progress")
       .then((response) => {
         if (!response.success) {
+          setRecoveryChecked(true);
           return;
         }
         const match = response.data.items.find(
           (item) => item.session_id === savedSessionId
         );
         if (match) {
-          setRecoverableSession(match);
+          if (savedSnapshotRaw) {
+            try {
+              const snapshot = JSON.parse(savedSnapshotRaw) as InterviewSnapshot;
+              if (snapshot.session?.session_id === savedSessionId) {
+                restoreSnapshot(snapshot);
+              } else {
+                setRecoverableSession(match);
+              }
+            } catch {
+              setRecoverableSession(match);
+            }
+          } else {
+            setRecoverableSession(match);
+          }
+        } else {
+          clearPersistedSession();
         }
+        setRecoveryChecked(true);
       })
-      .catch(() => {});
-  }, []);
+      .catch(() => {
+        setRecoveryChecked(true);
+      });
+  }, [clearPersistedSession, restoreSnapshot]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !recoveryChecked) {
+      return;
+    }
+
+    if (!session) {
+      return;
+    }
+
+    const snapshot: InterviewSnapshot = {
+      latencyState,
+      question,
+      transcript,
+      evaluation,
+      error,
+      questionNumber,
+      completedAnswers,
+      isInterviewComplete,
+      finalReport,
+      resumeProfile,
+      resumeId,
+      resumeFileName,
+      session,
+      setup,
+    };
+
+    window.localStorage.setItem(
+      SESSION_SNAPSHOT_STORAGE_KEY,
+      JSON.stringify(snapshot)
+    );
+  }, [
+    completedAnswers,
+    error,
+    evaluation,
+    finalReport,
+    isInterviewComplete,
+    latencyState,
+    question,
+    questionNumber,
+    recoveryChecked,
+    resumeFileName,
+    resumeId,
+    resumeProfile,
+    session,
+    setup,
+    transcript,
+  ]);
 
   const startInterview = useCallback(async () => {
     if (setup.interviewType === "jd_based" && !setup.jobDescription.trim()) {
@@ -155,7 +283,7 @@ export function useInterview() {
       setSession(sessionResponse.data);
       if (typeof window !== "undefined") {
         window.localStorage.setItem(
-          "interviewos_session_id",
+          SESSION_ID_STORAGE_KEY,
           sessionResponse.data.session_id
         );
       }
@@ -272,7 +400,7 @@ export function useInterview() {
       setIsInterviewComplete(true);
       setLatencyState("interview_complete");
       if (typeof window !== "undefined") {
-        window.localStorage.removeItem("interviewos_session_id");
+        clearPersistedSession();
       }
       setRecoverableSession(null);
       return;
@@ -297,9 +425,7 @@ export function useInterview() {
         if (response.error.code === "RATE_LIMIT_EXCEEDED") {
           setIsInterviewComplete(true);
           setLatencyState("interview_complete");
-          if (typeof window !== "undefined") {
-            window.localStorage.removeItem("interviewos_session_id");
-          }
+          clearPersistedSession();
           setRecoverableSession(null);
           return;
         }
@@ -320,7 +446,7 @@ export function useInterview() {
       setError(err instanceof Error ? err.message : "Failed to load next question");
       setLatencyState("error");
     }
-  }, [evaluation, question, questionNumber, session, transcript]);
+  }, [clearPersistedSession, evaluation, question, questionNumber, session, transcript]);
 
   const finishInterview = useCallback(() => {
     if (!question || !transcript || !evaluation) {
@@ -346,11 +472,9 @@ export function useInterview() {
     setCompletedAnswers((prev) => [...prev, completed]);
     setIsInterviewComplete(true);
     setLatencyState("interview_complete");
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem("interviewos_session_id");
-    }
+    clearPersistedSession();
     setRecoverableSession(null);
-  }, [evaluation, question, questionNumber, transcript]);
+  }, [clearPersistedSession, evaluation, question, questionNumber, transcript]);
 
   const generateReport = useCallback(async () => {
     if (!session) {
@@ -375,9 +499,7 @@ export function useInterview() {
 
       setFinalReport(response.data);
       setLatencyState("scorecard_ready");
-      if (typeof window !== "undefined") {
-        window.localStorage.removeItem("interviewos_session_id");
-      }
+      clearPersistedSession();
       setRecoverableSession(null);
     } catch (err) {
       setError(
@@ -387,7 +509,7 @@ export function useInterview() {
       );
       setLatencyState("interview_complete");
     }
-  }, [session]);
+  }, [clearPersistedSession, session]);
 
   const clearError = useCallback(() => {
     setError(null);
@@ -409,11 +531,39 @@ export function useInterview() {
   }, []);
 
   const discardRecovery = useCallback(() => {
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem("interviewos_session_id");
-    }
+    clearPersistedSession();
     setRecoverableSession(null);
-  }, []);
+  }, [clearPersistedSession]);
+
+  const resumeRecovery = useCallback((sessionId: string) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const savedSnapshotRaw = window.localStorage.getItem(
+      SESSION_SNAPSHOT_STORAGE_KEY
+    );
+    if (!savedSnapshotRaw) {
+      setError("Saved interview state is unavailable. Start a new interview.");
+      setLatencyState("error");
+      return;
+    }
+
+    try {
+      const snapshot = JSON.parse(savedSnapshotRaw) as InterviewSnapshot;
+      if (snapshot.session?.session_id !== sessionId) {
+        setError("Saved interview state does not match the recoverable session.");
+        setLatencyState("error");
+        return;
+      }
+      restoreSnapshot(snapshot);
+      setRecoverableSession(null);
+      setError(null);
+    } catch {
+      setError("Saved interview state could not be restored. Start a new interview.");
+      setLatencyState("error");
+    }
+  }, [restoreSnapshot]);
 
   const reset = useCallback(() => {
     setLatencyState("idle");
@@ -426,13 +576,12 @@ export function useInterview() {
     setIsInterviewComplete(false);
     setFinalReport(null);
     setSession(null);
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem("interviewos_session_id");
-    }
+    clearPersistedSession();
     setRecoverableSession(null);
-  }, []);
+  }, [clearPersistedSession]);
 
   return {
+    recoveryChecked,
     latencyState,
     question,
     transcript,
@@ -452,6 +601,7 @@ export function useInterview() {
     activeContextLabel,
     updateSetup,
     startInterview,
+    resumeRecovery,
     reset,
     clearError,
     handleResumeUploaded,

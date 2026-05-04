@@ -17,6 +17,7 @@ import { useInterview } from "@/hooks/useInterview";
 
 export default function InterviewPage() {
   const {
+    recoveryChecked,
     latencyState,
     question,
     transcript,
@@ -36,6 +37,7 @@ export default function InterviewPage() {
     activeContextLabel,
     updateSetup,
     startInterview,
+    resumeRecovery,
     handleResumeUploaded,
     skipResume,
     discardRecovery,
@@ -55,6 +57,26 @@ export default function InterviewPage() {
     latencyState === "voice_generating" ||
     latencyState === "next_question_loading";
 
+  if (!recoveryChecked) {
+    return (
+      <main className="flex min-h-screen items-center justify-center px-6 py-12">
+        <div className="w-full max-w-2xl space-y-6 text-center">
+          <div className="space-y-3">
+            <div className="font-mono text-xs uppercase tracking-[0.28em] text-[#8d8d8d]">
+              Loading session
+            </div>
+            <h1 className="text-4xl tracking-tight text-[#f5f5f5] md:text-5xl">
+              InterviewOS
+            </h1>
+            <p className="text-lg text-[#9a9a9a]">
+              Restoring your interview state...
+            </p>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="flex min-h-screen items-center justify-center px-6 py-12">
       <div className="w-full max-w-2xl space-y-6">
@@ -64,9 +86,7 @@ export default function InterviewPage() {
             interviewType={recoverableSession.interview_type}
             questionCount={recoverableSession.question_count}
             lastActivityAt={recoverableSession.started_at}
-            onResume={(sessionId) => {
-              console.log("Resume session:", sessionId);
-            }}
+            onResume={resumeRecovery}
             onDiscard={discardRecovery}
             onStartNew={() => {
               discardRecovery();
