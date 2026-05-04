@@ -1,7 +1,9 @@
 import os
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
+import pytest
 import pytest_asyncio
 from sqlalchemy import MetaData
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -17,11 +19,46 @@ os.environ.setdefault(
 )
 os.environ["DEBUG"] = "False"
 os.environ.setdefault("SUPABASE_JWT_SECRET", "test-secret")
+os.environ.setdefault("SUPABASE_URL", "https://test-project.supabase.co")
+os.environ.setdefault("SUPABASE_ANON_KEY", "test-anon-key")
 os.environ.setdefault("DEV_AUTH_BYPASS", "true")
+os.environ.setdefault("USE_MOCK_LLM", "true")
+os.environ.setdefault("USE_MOCK_STT", "true")
+os.environ.setdefault("USE_MOCK_TTS", "true")
 
 from app.db.base import Base
 from app.db.database import get_async_session
 from app.main import app
+
+
+@pytest.fixture(autouse=False)
+def dev_auth_bypass():
+    with patch("app.core.config.settings.DEV_AUTH_BYPASS", True):
+        with patch("app.core.config.settings.DEBUG", True):
+            yield
+
+
+@pytest.fixture
+def mock_llm():
+    with patch("app.core.config.settings.USE_MOCK_LLM", True):
+        yield
+
+
+@pytest.fixture
+def mock_stt():
+    with patch("app.core.config.settings.USE_MOCK_STT", True):
+        yield
+
+
+@pytest.fixture
+def mock_tts():
+    with patch("app.core.config.settings.USE_MOCK_TTS", True):
+        yield
+
+
+@pytest.fixture
+def all_mocked(dev_auth_bypass, mock_llm, mock_stt, mock_tts):
+    yield
 
 
 @pytest_asyncio.fixture(autouse=True)

@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 import { AudioPlayer } from "@/components/AudioPlayer";
 import { AnswerReview } from "@/components/AnswerReview";
 import { AuthGuard } from "@/components/AuthGuard";
@@ -27,6 +29,7 @@ export default function InterviewPage() {
 }
 
 function InterviewPageContent() {
+  const [isMockMode, setIsMockMode] = useState(false);
   const { user } = useSupabaseSession();
   const {
     recoveryChecked,
@@ -65,6 +68,18 @@ function InterviewPageContent() {
     clearError,
   } = useInterview();
 
+  useEffect(() => {
+    fetch("/api/health/deep")
+      .then((response) => response.json())
+      .then((data) => {
+        const mock = data?.data?.checks?.mock_mode;
+        if (mock && (mock.llm || mock.stt || mock.tts)) {
+          setIsMockMode(true);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const isLoading =
     latencyState === "question_generating" ||
     latencyState === "voice_generating" ||
@@ -93,6 +108,11 @@ function InterviewPageContent() {
   return (
     <main className="flex min-h-screen items-center justify-center px-6 py-12">
       <div className="w-full max-w-2xl space-y-6">
+        {isMockMode ? (
+          <div className="w-full border-b border-amber-700/30 bg-amber-900/30 px-3 py-1 text-center text-xs font-mono text-amber-400">
+            Dev mode - AI responses are mocked. Set USE_MOCK_LLM=false for real Gemini.
+          </div>
+        ) : null}
         {user?.email ? (
           <div className="flex justify-end">
             <UserMenu email={user.email} />

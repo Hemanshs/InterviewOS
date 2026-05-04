@@ -40,3 +40,18 @@ async def test_health_returns_json_content_type():
         response = await client.get("/api/health")
 
     assert response.headers["content-type"] == "application/json"
+
+
+@pytest.mark.asyncio
+async def test_deep_health_returns_database_and_mock_mode_checks():
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/api/health/deep")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    checks = payload["data"]["checks"]
+    assert checks["database"] == "ok"
+    assert "mock_mode" in checks

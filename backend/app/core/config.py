@@ -7,6 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     APP_NAME: str = "interviewos-api"
     APP_VERSION: str = "1.0.0"
+    APP_ENV: str = "development"
     DEBUG: bool = False
     USE_MOCK_AI: bool = True
     USE_MOCK_STT: bool = True
@@ -24,10 +25,17 @@ class Settings(BaseSettings):
     STT_PROVIDER: str = "gemini"
     LLM_PROVIDER: str = "gemini"
     GEMINI_MODEL: str = "gemini-2.5-flash-lite"
-    GEMINI_REPORT_MODEL: str = "gemini-2.5-flash-lite"
+    GEMINI_REPORT_MODEL: str = ""
     ELEVENLABS_API_KEY: str = ""
     ELEVENLABS_VOICE_ID: str = "21m00Tcm4TlvDq8ikWAM"
-    ALLOWED_ORIGINS: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+    ALLOWED_ORIGINS: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ]
+    )
+    BACKEND_CORS_ORIGINS: str = ""
+    VERCEL_URL: str = ""
     DAILY_AI_BUDGET_USD: float = 20.0
     FREE_INTERVIEW_TOTAL_LIMIT: int = 1
     FREE_SESSION_QUESTION_LIMIT: int = 5
@@ -67,6 +75,53 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return value.strip().lower()
         return value
+
+    @field_validator("ALLOWED_ORIGINS", mode="before")
+    @classmethod
+    def normalize_allowed_origins(cls, value):
+        if isinstance(value, list):
+            return value
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return []
+            if stripped.startswith("["):
+                import json
+
+                try:
+                    parsed = json.loads(stripped)
+                except json.JSONDecodeError:
+                    parsed = None
+                if isinstance(parsed, list):
+                    return [str(item).strip() for item in parsed if str(item).strip()]
+            return [item.strip() for item in stripped.split(",") if item.strip()]
+        return value
+
+    @property
+    def cors_origins(self) -> list[str]:
+        origins = list(self.ALLOWED_ORIGINS)
+        raw_backend_origins = self.BACKEND_CORS_ORIGINS.strip()
+        if raw_backend_origins:
+            if raw_backend_origins.startswith("["):
+                import json
+
+                try:
+                    parsed = json.loads(raw_backend_origins)
+                except json.JSONDecodeError:
+                    parsed = []
+                if isinstance(parsed, list):
+                    origins = [str(item).strip() for item in parsed if str(item).strip()]
+            else:
+                origins = [
+                    item.strip() for item in raw_backend_origins.split(",") if item.strip()
+                ]
+        if self.VERCEL_URL:
+            vercel_url = self.VERCEL_URL
+            if not vercel_url.startswith("http"):
+                vercel_url = f"https://{vercel_url}"
+            if vercel_url not in origins:
+                origins.append(vercel_url)
+        return origins
 
     model_config = SettingsConfigDict(
         env_file=".env",

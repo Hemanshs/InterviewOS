@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: interviewos-api
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: interviewos-db
+          property: connectionString
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: USE_MOCK_LLM
+        value: "false"
+      - key: USE_MOCK_STT
+        value: "false"
+      - key: USE_MOCK_TTS
+        value: "true"
+      - key: REQUIRE_AUTH
+        value: "true"
+      - key: DEV_AUTH_BYPASS
+        value: "false"
+      - key: VERCEL_URL
+        sync: false
+
+databases:
+  - name: interviewos-db
+    databaseName: interviewos
+    plan: free

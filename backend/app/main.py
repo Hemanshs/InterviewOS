@@ -6,8 +6,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
+from app.core.startup import validate_startup_config
 from app.db.database import close_database_pool, connect_to_database
+from app.middleware.logging import RequestLoggingMiddleware
 from app.routes import account, audio, feedback, health, interview, resume, usage
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -23,6 +31,7 @@ OPENAPI_TAGS = [
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    validate_startup_config()
     app.state.db_pool = None
     try:
         app.state.db_pool = await connect_to_database()
@@ -46,9 +55,10 @@ def create_application() -> FastAPI:
         openapi_tags=OPENAPI_TAGS,
     )
 
+    app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.ALLOWED_ORIGINS,
+        allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
