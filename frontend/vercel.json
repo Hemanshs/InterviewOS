@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://interviewos-api.onrender.com/api/:path*"
+      "destination": "https://interviewos-edug.onrender.com/api/:path*"
     }
   ],
   "headers": [
