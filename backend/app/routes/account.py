@@ -3,10 +3,18 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import bearer_scheme, get_current_user, get_user_email_from_token
 from app.db.database import get_async_session, get_or_create_user
+from app.models.answer import Answer as AnswerModel
+from app.models.question import Question as QuestionModel
+from app.models.report import Report as ReportModel
+from app.models.resume import Resume as ResumeModel
+from app.models.score import Score as ScoreModel
+from app.models.session import Session as SessionModel
+from app.models.usage_event import UsageEvent as UsageEventModel
 from app.models.user import User as UserModel
 from app.schemas import (
     DeleteAccountData,
@@ -17,7 +25,6 @@ from app.schemas import (
     SuccessResponse,
     UserData,
 )
-from sqlalchemy import select, text
 
 router = APIRouter(prefix="", tags=["account"])
 
@@ -73,21 +80,29 @@ async def delete_account(
         )
 
     uid = UUID(str(current_user))
+    await get_or_create_user(db, str(current_user))
     deleted_at = datetime.now(timezone.utc)
-    for query in [
-        "DELETE FROM scores WHERE session_id IN (SELECT id FROM sessions WHERE user_id = :uid)",
-        "DELETE FROM answers WHERE session_id IN (SELECT id FROM sessions WHERE user_id = :uid)",
-        "DELETE FROM questions WHERE session_id IN (SELECT id FROM sessions WHERE user_id = :uid)",
-        "DELETE FROM reports WHERE user_id = :uid",
-        "DELETE FROM sessions WHERE user_id = :uid",
-        "DELETE FROM resumes WHERE user_id = :uid",
-        "DELETE FROM usage_events WHERE user_id = :uid",
-    ]:
-        await db.execute(text(query), {"uid": uid})
-    await db.execute(
-        text("UPDATE users SET deleted_at = :deleted_at WHERE id = :uid"),
-        {"uid": uid, "deleted_at": deleted_at},
+    session_ids = list(
+        (
+            await db.execute(select(SessionModel.id).where(SessionModel.user_id == uid))
+        ).scalars().all()
     )
+
+    if session_ids:
+        await db.execute(delete(ScoreModel).where(ScoreModel.session_id.in_(session_ids)))
+        await db.execute(delete(AnswerModel).where(AnswerModel.session_id.in_(session_ids)))
+        await db.execute(delete(QuestionModel).where(QuestionModel.session_id.in_(session_ids)))
+
+    await db.execute(delete(ReportModel).where(ReportModel.user_id == uid))
+    await db.execute(delete(SessionModel).where(SessionModel.user_id == uid))
+    await db.execute(delete(ResumeModel).where(ResumeModel.user_id == uid))
+    await db.execute(delete(UsageEventModel).where(UsageEventModel.user_id == uid))
+
+    user = (
+        await db.execute(select(UserModel).where(UserModel.id == uid))
+    ).scalar_one_or_none()
+    if user is not None:
+        user.deleted_at = deleted_at
 
     await db.commit()
 

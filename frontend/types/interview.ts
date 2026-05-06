@@ -29,9 +29,13 @@ export type LatencyStateType =
 
 export interface AudioData {
   enabled: boolean;
+  provider: "elevenlabs" | "browser" | null;
   audio_url: string | null;
   duration_seconds: number | null;
   cached: boolean;
+  label: string;
+  upgrade_required: boolean;
+  browser_speech_text: string | null;
 }
 
 export interface QuestionDetail {

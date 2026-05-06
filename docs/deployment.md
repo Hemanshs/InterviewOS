@@ -97,3 +97,24 @@ USE_MOCK_TTS=true
   - Run `alembic upgrade head`
 - Cold starts on free tier:
   - Expect the first request after idle to be slow
+
+## 8. ElevenLabs TTS Setup
+
+### Get API credentials
+1. Sign up at https://elevenlabs.io
+2. Go to Profile -> API Keys -> Create API key
+3. Copy the key and set it as `ELEVENLABS_API_KEY` in Render
+4. Open Voice Library and choose a voice
+5. Copy the Voice ID and set `ELEVENLABS_VOICE_ID`
+
+### Render environment variables to add
+```env
+USE_MOCK_TTS=false
+VOICE_ENABLED_DEFAULT=true
+ELEVENLABS_API_KEY=your_api_key_here
+ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM
+ELEVENLABS_MODEL_ID=eleven_multilingual_v2
+ELEVENLABS_OUTPUT_FORMAT=mp3_44100_128
+TTS_CACHE_ENABLED=true
+PUBLIC_BACKEND_URL=https://your-api.onrender.com
+```

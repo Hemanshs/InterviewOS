@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
-import { supabase, useSupabaseSession } from "@/lib/supabaseClient";
+import { getAccessToken, supabase, useSupabaseSession } from "@/lib/supabaseClient";
 
 export default function LoginPage() {
   const [mode, setMode] = useState<"login" | "signup">("login");
@@ -14,6 +14,27 @@ export default function LoginPage() {
   const [message, setMessage] = useState<string | null>(null);
   const { configured } = useSupabaseSession();
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const verifyActiveAccount = async (): Promise<boolean> => {
+    const token = await getAccessToken();
+    const response = await fetch("/api/me", {
+      headers: {
+        Authorization: `Bearer ${token ?? ""}`,
+      },
+    });
+    const payload = await response.json();
+    if (response.ok && payload?.success) {
+      return true;
+    }
+    if (payload?.error?.code === "ACCOUNT_DELETED") {
+      await supabase?.auth.signOut();
+      setError("This account was deleted and cannot be used again.");
+      return false;
+    }
+    setError(payload?.error?.message || "Unable to verify your account.");
+    return false;
+  };
 
   const handleSubmit = async () => {
     if (!supabase) {
@@ -34,7 +55,10 @@ export default function LoginPage() {
         if (authError) {
           setError(authError.message);
         } else {
-          router.push("/interview");
+          const active = await verifyActiveAccount();
+          if (active) {
+            router.push("/interview");
+          }
         }
       } else {
         const { error: authError } = await supabase.auth.signUp({
@@ -106,6 +130,10 @@ export default function LoginPage() {
           {error ? (
             <div className="rounded-lg border border-[#5f1f1f] bg-[#231111] px-4 py-3 text-sm text-[#ffb4b4]">
               {error}
+            </div>
+          ) : searchParams.get("error") === "account_deleted" ? (
+            <div className="rounded-lg border border-[#5f1f1f] bg-[#231111] px-4 py-3 text-sm text-[#ffb4b4]">
+              This account was deleted and can no longer be used.
             </div>
           ) : null}
           {message ? (

@@ -3,7 +3,7 @@ from collections.abc import AsyncGenerator
 
 import asyncpg
 from fastapi import Request
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -62,17 +62,34 @@ async def get_or_create_user(
 ) -> str:
     """
     Upsert a local user row for the authenticated Supabase user.
+    If a previously deleted account returns with the same email, revive the row
+    while preserving its prior usage limits.
     """
     effective_email = email or f"{user_id}@interviewos.local"
 
     user_uuid = uuid.UUID(user_id)
-    existing = await session.execute(select(User).where(User.id == user_uuid))
-    user = existing.scalar_one_or_none()
-    if user is not None:
-        if user.email != effective_email:
-            user.email = effective_email
+    existing = await session.execute(
+        select(User).where(or_(User.id == user_uuid, User.email == effective_email))
+    )
+    users = list(existing.scalars().all())
+
+    user_by_id = next((user for user in users if user.id == user_uuid), None)
+    if user_by_id is not None:
+        if user_by_id.deleted_at is not None:
+            user_by_id.deleted_at = None
+        if user_by_id.email != effective_email:
+            user_by_id.email = effective_email
+        await session.commit()
+        return str(user_by_id.id)
+
+    user_by_email = next((user for user in users if user.email == effective_email), None)
+    if user_by_email is not None:
+        if user_by_email.deleted_at is not None:
+            user_by_email.id = user_uuid
+            user_by_email.deleted_at = None
             await session.commit()
-        return str(user.id)
+            return str(user_by_email.id)
+        return str(user_by_email.id)
 
     user = User(id=user_uuid, email=effective_email)
     session.add(user)

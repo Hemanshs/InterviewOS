@@ -20,6 +20,9 @@ import { UserMenu } from "@/components/UserMenu";
 import { useInterview } from "@/hooks/useInterview";
 import { useSupabaseSession } from "@/lib/supabaseClient";
 
+let cachedMockMode: boolean | null = null;
+let mockModeRequest: Promise<boolean> | null = null;
+
 export default function InterviewPage() {
   return (
     <AuthGuard>
@@ -68,16 +71,64 @@ function InterviewPageContent() {
     clearError,
   } = useInterview();
 
+  const primeBrowserSpeech = () => {
+    if (
+      typeof window === "undefined" ||
+      !("speechSynthesis" in window) ||
+      typeof window.SpeechSynthesisUtterance === "undefined"
+    ) {
+      return;
+    }
+
+    try {
+      const browserWindow = window as Window & {
+        __interviewosSpeechPrimed?: boolean;
+        __interviewosSpeechPrimeTimer?: number;
+      };
+      const utterance = new SpeechSynthesisUtterance(". . . . . . . . . .");
+      utterance.volume = 0;
+      utterance.rate = 0.6;
+      utterance.pitch = 1;
+      browserWindow.__interviewosSpeechPrimed = true;
+
+      if (browserWindow.__interviewosSpeechPrimeTimer) {
+        window.clearTimeout(browserWindow.__interviewosSpeechPrimeTimer);
+      }
+
+      window.speechSynthesis.speak(utterance);
+      browserWindow.__interviewosSpeechPrimeTimer = window.setTimeout(() => {
+        browserWindow.__interviewosSpeechPrimed = false;
+        window.speechSynthesis.cancel();
+      }, 15000);
+    } catch {
+      // best-effort browser unlock; ignore failures
+    }
+  };
+
   useEffect(() => {
-    fetch("/api/health/deep")
-      .then((response) => response.json())
-      .then((data) => {
-        const mock = data?.data?.checks?.mock_mode;
-        if (mock && (mock.llm || mock.stt || mock.tts)) {
-          setIsMockMode(true);
-        }
-      })
-      .catch(() => {});
+    if (cachedMockMode !== null) {
+      setIsMockMode(cachedMockMode);
+      return;
+    }
+
+    if (!mockModeRequest) {
+      mockModeRequest = fetch("/api/health/deep")
+        .then((response) => response.json())
+        .then((data) => {
+          const mock = data?.data?.checks?.mock_mode;
+          const nextValue = Boolean(mock && (mock.llm || mock.stt || mock.tts));
+          cachedMockMode = nextValue;
+          return nextValue;
+        })
+        .catch(() => false)
+        .finally(() => {
+          mockModeRequest = null;
+        });
+    }
+
+    mockModeRequest.then((value) => {
+      setIsMockMode(value);
+    });
   }, []);
 
   const isLoading =
@@ -125,7 +176,10 @@ function InterviewPageContent() {
             interviewType={recoverableSession.interview_type}
             questionCount={recoverableSession.question_count}
             lastActivityAt={recoverableSession.started_at}
-            onResume={resumeRecovery}
+            onResume={() => {
+              primeBrowserSpeech();
+              resumeRecovery(recoverableSession.session_id);
+            }}
             onDiscard={discardRecovery}
             onStartNew={() => {
               discardRecovery();
@@ -296,7 +350,10 @@ function InterviewPageContent() {
 
               <div className="flex justify-center pt-2">
                 <button
-                  onClick={startInterview}
+                  onClick={() => {
+                    primeBrowserSpeech();
+                    startInterview();
+                  }}
                   disabled={isLoading}
                   className="rounded-sm border border-[#ff6b00] bg-[#ff6b00] px-8 py-3 font-semibold text-[#111111] transition-colors hover:bg-[#ff7d26] disabled:cursor-not-allowed disabled:opacity-50"
                 >
@@ -386,6 +443,11 @@ function InterviewPageContent() {
               audioUrl={question.audio.audio_url}
               enabled={question.audio.enabled}
               cached={question.audio.cached}
+              provider={question.audio.provider}
+              label={question.audio.label}
+              upgradeRequired={question.audio.upgrade_required}
+              browserSpeechText={question.audio.browser_speech_text}
+              questionText={question.question_text}
             />
             <MicRecorder
               questionId={question.question_id}
@@ -420,7 +482,10 @@ function InterviewPageContent() {
             questionNumber < maxQuestions ? (
               <div className="flex justify-center">
                 <button
-                  onClick={loadNextQuestion}
+                  onClick={() => {
+                    primeBrowserSpeech();
+                    loadNextQuestion();
+                  }}
                   className="rounded-xl bg-white px-8 py-3 font-semibold text-black transition-colors hover:bg-gray-100 disabled:opacity-50"
                 >
                   Next Question →

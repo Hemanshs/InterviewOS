@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     USE_MOCK_STT: bool = True
     USE_MOCK_LLM: bool = True
     USE_MOCK_TTS: bool = True
+    VOICE_ENABLED_DEFAULT: bool = True
     DATABASE_URL: str
     ALEMBIC_DATABASE_URL: str = ""
     SUPABASE_URL: str = ""
@@ -28,6 +29,9 @@ class Settings(BaseSettings):
     GEMINI_REPORT_MODEL: str = ""
     ELEVENLABS_API_KEY: str = ""
     ELEVENLABS_VOICE_ID: str = "21m00Tcm4TlvDq8ikWAM"
+    ELEVENLABS_MODEL_ID: str = "eleven_multilingual_v2"
+    ELEVENLABS_OUTPUT_FORMAT: str = "mp3_44100_128"
+    PUBLIC_BACKEND_URL: str = "http://127.0.0.1:8000"
     ALLOWED_ORIGINS: list[str] = Field(
         default_factory=lambda: [
             "http://localhost:3000",
@@ -53,6 +57,7 @@ class Settings(BaseSettings):
         "USE_MOCK_STT",
         "USE_MOCK_LLM",
         "USE_MOCK_TTS",
+        "VOICE_ENABLED_DEFAULT",
         "REQUIRE_AUTH",
         "DEV_AUTH_BYPASS",
         mode="before",

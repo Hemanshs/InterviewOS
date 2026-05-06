@@ -21,6 +21,8 @@ type UploadState =
   | "transcribing"
   | "error";
 
+const STOP_AUDIO_EVENT = "interviewos-stop-question-audio";
+
 function formatElapsed(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   const remainder = String(seconds % 60).padStart(2, "0");
@@ -172,6 +174,12 @@ export function MicRecorder({
         <button
           onClick={() => {
             setUploadError(null);
+            if (typeof window !== "undefined") {
+              window.dispatchEvent(new Event(STOP_AUDIO_EVENT));
+              if ("speechSynthesis" in window) {
+                window.speechSynthesis.cancel();
+              }
+            }
             onStateChange?.("recording_answer");
             void startRecording();
           }}

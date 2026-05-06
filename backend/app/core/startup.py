@@ -13,6 +13,7 @@ ALWAYS_REQUIRED = [
 CONDITIONAL_REQUIRED = {
     "GEMINI_API_KEY": lambda: not settings.USE_MOCK_LLM,
     "ELEVENLABS_API_KEY": lambda: not settings.USE_MOCK_TTS,
+    "PUBLIC_BACKEND_URL": lambda: not settings.USE_MOCK_TTS,
     "SUPABASE_URL": lambda: settings.REQUIRE_AUTH and not settings.DEV_AUTH_BYPASS,
     "SUPABASE_ANON_KEY": lambda: settings.REQUIRE_AUTH and not settings.DEV_AUTH_BYPASS,
 }

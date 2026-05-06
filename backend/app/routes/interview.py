@@ -1,3 +1,4 @@
+import logging
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -58,9 +59,11 @@ from app.schemas import (
 from app.services.llm_service import LLMService
 from app.services.session_service import SESSION_EXPIRY_MINUTES, SessionService
 from app.services.speech_service import SpeechService
+from app.services.voice_access_service import get_voice_access_for_question
 from app.services.voice_service import VoiceService
 
 router = APIRouter(prefix="/interview", tags=["Interviews"])
+logger = logging.getLogger("interviewos.tts")
 voice_service = VoiceService()
 llm_service = LLMService()
 speech_service = SpeechService()
@@ -387,7 +390,18 @@ async def generate_question(
     db: AsyncSession = Depends(get_async_session),
 ):
     user_id = await get_or_create_user(db, str(current_user))
+    user_result = await db.execute(select(UserModel).where(UserModel.id == UUID(user_id)))
+    user = user_result.scalar_one_or_none()
     db_session = await session_service.get_session(db, str(body.session_id))
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "success": False,
+                "error": {"code": "USER_NOT_FOUND", "message": "User not found"},
+            },
+        )
 
     if not db_session:
         raise HTTPException(
@@ -529,22 +543,72 @@ async def generate_question(
         mode=body.mode if body.mode else ("first" if sequence == 1 else "next"),
     )
 
+    voice_access = get_voice_access_for_question(user, sequence)
     audio_data = AudioData(enabled=False)
     completed_steps = ["question_generated"]
+    elevenlabs_called = False
     if body.include_voice:
-        try:
-            tts_result = await voice_service.generate_question_audio(
-                question_text=question_result["question_text"]
-            )
+        if voice_access["provider"] == "elevenlabs":
+            elevenlabs_called = True
+            try:
+                tts_result = await voice_service.generate_question_audio(
+                    question_text=question_result["question_text"]
+                )
+                audio_data = AudioData(
+                    enabled=True,
+                    provider="elevenlabs",
+                    audio_url=tts_result["audio_url"],
+                    duration_seconds=tts_result["duration_seconds"],
+                    cached=tts_result["cached"],
+                    label=voice_access["label"],
+                    upgrade_required=False,
+                    browser_speech_text=None,
+                )
+                completed_steps.append("voice_generated")
+            except Exception as exc:
+                logger.warning("Question TTS generation failed: %s", exc)
+                audio_data = AudioData(
+                    enabled=True,
+                    provider="browser",
+                    audio_url=None,
+                    duration_seconds=None,
+                    cached=False,
+                    label="Standard Voice",
+                    upgrade_required=False if str(getattr(user.plan, "value", user.plan)) == "pro" else voice_access["upgrade_required"],
+                    browser_speech_text=question_result["question_text"],
+                )
+        elif voice_access["provider"] == "browser":
             audio_data = AudioData(
                 enabled=True,
-                audio_url=tts_result["audio_url"],
-                duration_seconds=tts_result["duration_seconds"],
-                cached=tts_result["cached"],
+                provider="browser",
+                audio_url=None,
+                duration_seconds=None,
+                cached=False,
+                label="Standard Voice",
+                upgrade_required=True,
+                browser_speech_text=question_result["question_text"],
             )
-            completed_steps.append("voice_generated")
-        except Exception:
-            audio_data = AudioData(enabled=False)
+    else:
+        audio_data = AudioData(
+            enabled=False,
+            provider=None,
+            audio_url=None,
+            duration_seconds=None,
+            cached=False,
+            label="",
+            upgrade_required=False,
+            browser_speech_text=None,
+        )
+
+    logger.info(
+        "voice_access user_id=%s plan=%s question_sequence=%s voice_provider=%s elevenlabs_called=%s cached=%s",
+        user_id,
+        str(getattr(user.plan, "value", user.plan)),
+        sequence,
+        audio_data.provider,
+        elevenlabs_called,
+        audio_data.cached,
+    )
 
     db_question = await session_service.create_question(
         db,

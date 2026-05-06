@@ -13,3 +13,5 @@ frontend/.env.local
 frontend/.next/
 frontend/node_modules/
 frontend/tsconfig.tsbuildinfo
+backend/static/audio/*.mp3
+backend/static/audio/*.wav

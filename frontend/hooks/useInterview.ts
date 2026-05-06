@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   evaluateAnswer,
@@ -29,6 +29,7 @@ import type {
 const MAX_QUESTIONS = 5;
 const SESSION_ID_STORAGE_KEY = "interviewos_session_id";
 const SESSION_SNAPSHOT_STORAGE_KEY = "interviewos_session_snapshot";
+const recoveryChecks = new Set<string>();
 
 interface SetupState {
   interviewType: InterviewType;
@@ -87,6 +88,7 @@ export function useInterview() {
   const [recoverableSession, setRecoverableSession] = useState<HistoryItem | null>(null);
   const [recoveryChecked, setRecoveryChecked] = useState(false);
   const [restoringSession, setRestoringSession] = useState(false);
+  const recoveryCheckKeyRef = useRef<string | null>(null);
 
   const activeContextLabel = useMemo(() => {
     if (session?.resume_id) {
@@ -119,6 +121,12 @@ export function useInterview() {
         ? snapshot.transcript
           ? "transcript_ready"
           : "ready_for_answer"
+        : snapshot.latencyState === "question_generating" ||
+            snapshot.latencyState === "voice_generating" ||
+            snapshot.latencyState === "next_question_loading"
+          ? snapshot.question
+            ? "ready_for_answer"
+            : "idle"
         : snapshot.latencyState;
 
     setLatencyState(normalizedLatencyState);
@@ -228,6 +236,17 @@ export function useInterview() {
     }
 
     const savedSessionId = window.localStorage.getItem(SESSION_ID_STORAGE_KEY);
+    const authKey = configured
+      ? authSession?.user?.id ?? "configured-anonymous"
+      : "dev-bypass";
+    const recoveryKey = `${authKey}:${savedSessionId ?? "none"}`;
+    recoveryCheckKeyRef.current = recoveryKey;
+
+    if (recoveryChecks.has(recoveryKey)) {
+      setRecoveryChecked(true);
+      return;
+    }
+    recoveryChecks.add(recoveryKey);
 
     const savedSnapshotRaw = window.localStorage.getItem(
       SESSION_SNAPSHOT_STORAGE_KEY

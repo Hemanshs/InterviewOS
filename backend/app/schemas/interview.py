@@ -75,9 +75,13 @@ class QuestionData(BaseModel):
 
 class AudioData(BaseModel):
     enabled: bool
+    provider: Literal["elevenlabs", "browser"] | None = None
     audio_url: Optional[str] = None
     duration_seconds: Optional[float] = None
     cached: bool = False
+    label: str = ""
+    upgrade_required: bool = False
+    browser_speech_text: Optional[str] = None
 
 
 class QuestionDetail(BaseModel):

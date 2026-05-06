@@ -1,4 +1,6 @@
 import hashlib
+from pathlib import Path
+from typing import Any
 
 from app.core.config import settings
 from app.core.exceptions import VoiceGenerationError
@@ -6,14 +8,29 @@ from app.core.exceptions import VoiceGenerationError
 # In-memory TTS cache for Phase 2.2.
 # Phase 2.3: replace with DB-backed cache using a tts_cache table.
 _tts_cache: dict[str, dict] = {}
+AUDIO_DIR = Path(__file__).resolve().parents[2] / "static" / "audio"
+DEFAULT_VOICE_SETTINGS = {
+    "stability": 0.5,
+    "similarity_boost": 0.75,
+}
 
 
-def _make_cache_key(question_text: str, voice_id: str) -> str:
+def _make_cache_key(
+    question_text: str,
+    voice_id: str,
+    model_id: str | None = None,
+    voice_settings: dict[str, Any] | None = None,
+) -> str:
     """
     Cache key = sha256(question_text + voice_id).
     Matches cost-control.md Section 9.2 TTS caching strategy.
     """
-    raw = f"{question_text}:{voice_id}"
+    effective_model_id = model_id or settings.ELEVENLABS_MODEL_ID
+    effective_voice_settings = voice_settings or DEFAULT_VOICE_SETTINGS
+    voice_settings_blob = ",".join(
+        f"{key}={effective_voice_settings[key]}" for key in sorted(effective_voice_settings)
+    )
+    raw = f"{question_text}:{voice_id}:{effective_model_id}:{voice_settings_blob}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
@@ -24,6 +41,16 @@ def _estimate_duration(text: str) -> float:
     """
     word_count = len(text.split())
     return round(word_count / 2.5, 1)
+
+
+def _audio_path(cache_key: str) -> Path:
+    AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+    return AUDIO_DIR / f"{cache_key[:32]}.mp3"
+
+
+def _audio_url(cache_key: str) -> str:
+    base_url = settings.PUBLIC_BACKEND_URL.rstrip("/")
+    return f"{base_url}/static/audio/{cache_key[:32]}.mp3"
 
 
 class VoiceService:
@@ -44,7 +71,12 @@ class VoiceService:
         If USE_MOCK_TTS=false: call real ElevenLabs API.
         """
         effective_voice_id = voice_id or self.voice_id
-        cache_key = _make_cache_key(question_text, effective_voice_id)
+        cache_key = _make_cache_key(
+            question_text,
+            effective_voice_id,
+            settings.ELEVENLABS_MODEL_ID,
+            DEFAULT_VOICE_SETTINGS,
+        )
 
         if settings.TTS_CACHE_ENABLED and cache_key in _tts_cache:
             cached = _tts_cache[cache_key]
@@ -55,10 +87,31 @@ class VoiceService:
                 "enabled": True,
             }
 
+        if settings.TTS_CACHE_ENABLED and not settings.USE_MOCK_TTS:
+            file_path = _audio_path(cache_key)
+            if file_path.exists():
+                audio_url = _audio_url(cache_key)
+                duration = _estimate_duration(question_text)
+                _tts_cache[cache_key] = {
+                    "audio_url": audio_url,
+                    "duration_seconds": duration,
+                }
+                return {
+                    "audio_url": audio_url,
+                    "duration_seconds": duration,
+                    "cached": True,
+                    "enabled": True,
+                }
+
         if settings.USE_MOCK_TTS:
             result = self._mock_generate(question_text, cache_key)
         else:
-            result = await self._real_generate(question_text, effective_voice_id, cache_key)
+            result = await self._real_generate(
+                question_text,
+                effective_voice_id,
+                DEFAULT_VOICE_SETTINGS,
+                cache_key,
+            )
 
         if settings.TTS_CACHE_ENABLED:
             _tts_cache[cache_key] = {
@@ -72,7 +125,8 @@ class VoiceService:
         self,
         question_text: str,
         voice_id: str,
-        cache_key: str,
+        voice_settings: dict[str, Any] | str | None = None,
+        cache_key: str | None = None,
     ) -> dict:
         """
         Real ElevenLabs TTS generation.
@@ -83,10 +137,22 @@ class VoiceService:
         - Return permanent public URL instead of temp URL
         - Store cache entry in DB tts_cache table for persistence across restarts
         """
+        if isinstance(voice_settings, str) and cache_key is None:
+            cache_key = voice_settings
+            voice_settings = None
+
         if not settings.ELEVENLABS_API_KEY:
             raise VoiceGenerationError(
-                "ELEVENLABS_API_KEY is not set. Set USE_MOCK_TTS=true for development."
+                "ELEVENLABS_API_KEY is required when USE_MOCK_TTS=false"
             )
+
+        effective_voice_settings = voice_settings or DEFAULT_VOICE_SETTINGS
+        effective_cache_key = cache_key or _make_cache_key(
+            question_text,
+            voice_id,
+            settings.ELEVENLABS_MODEL_ID,
+            effective_voice_settings,
+        )
 
         try:
             import httpx
@@ -99,23 +165,23 @@ class VoiceService:
             }
             payload = {
                 "text": question_text,
-                "model_id": "eleven_monolingual_v1",
-                "voice_settings": {
-                    "stability": 0.5,
-                    "similarity_boost": 0.75,
-                },
+                "model_id": settings.ELEVENLABS_MODEL_ID,
+                "voice_settings": effective_voice_settings,
             }
 
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(url, headers=headers, json=payload)
 
+            if response.status_code == 401:
+                raise VoiceGenerationError("ElevenLabs authentication failed")
             if response.status_code != 200:
                 raise VoiceGenerationError(
                     f"ElevenLabs returned {response.status_code}: {response.text[:200]}"
                 )
 
-            short_key = cache_key[:8]
-            audio_url = f"https://storage.interviewos.dev/audio/{short_key}.mp3"
+            file_path = _audio_path(effective_cache_key)
+            file_path.write_bytes(response.content)
+            audio_url = _audio_url(effective_cache_key)
             duration = _estimate_duration(question_text)
 
             return {

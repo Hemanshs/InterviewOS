@@ -1,9 +1,11 @@
 from contextlib import asynccontextmanager
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
 from app.core.startup import validate_startup_config
@@ -63,6 +65,10 @@ def create_application() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    static_dir = Path(__file__).resolve().parents[1] / "static"
+    (static_dir / "audio").mkdir(parents=True, exist_ok=True)
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
