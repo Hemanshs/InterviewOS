@@ -1,5 +1,6 @@
 import logging
 import sys
+from hashlib import sha256
 
 from app.core.config import settings
 
@@ -17,6 +18,14 @@ CONDITIONAL_REQUIRED = {
     "SUPABASE_URL": lambda: settings.REQUIRE_AUTH and not settings.DEV_AUTH_BYPASS,
     "SUPABASE_ANON_KEY": lambda: settings.REQUIRE_AUTH and not settings.DEV_AUTH_BYPASS,
 }
+
+
+def _secret_fingerprint(value: str) -> str:
+    stripped = value.strip()
+    if not stripped:
+        return "missing"
+    digest = sha256(stripped.encode("utf-8")).hexdigest()[:10]
+    return f"{stripped[:4]}...{digest}"
 
 
 def validate_startup_config() -> None:
@@ -55,6 +64,12 @@ def validate_startup_config() -> None:
         settings.USE_MOCK_STT,
     )
     logger.info("  USE_MOCK_TTS: %s", settings.USE_MOCK_TTS)
+    if not settings.USE_MOCK_TTS:
+        logger.info(
+            "  ELEVENLABS voice: %s | key fingerprint: %s",
+            settings.ELEVENLABS_VOICE_ID,
+            _secret_fingerprint(settings.ELEVENLABS_API_KEY),
+        )
     logger.info(
         "  REQUIRE_AUTH: %s | DEV_AUTH_BYPASS: %s",
         settings.REQUIRE_AUTH,

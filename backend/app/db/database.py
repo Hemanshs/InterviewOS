@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator
 import asyncpg
 from fastapi import Request
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -93,5 +94,35 @@ async def get_or_create_user(
 
     user = User(id=user_uuid, email=effective_email)
     session.add(user)
-    await session.commit()
-    return user_id
+    try:
+        await session.commit()
+        return user_id
+    except IntegrityError:
+        await session.rollback()
+        existing = await session.execute(
+            select(User).where(or_(User.id == user_uuid, User.email == effective_email))
+        )
+        recovered_users = list(existing.scalars().all())
+
+        recovered_by_id = next(
+            (existing_user for existing_user in recovered_users if existing_user.id == user_uuid),
+            None,
+        )
+        if recovered_by_id is not None:
+            if recovered_by_id.deleted_at is not None:
+                recovered_by_id.deleted_at = None
+                await session.commit()
+            return str(recovered_by_id.id)
+
+        recovered_by_email = next(
+            (
+                existing_user
+                for existing_user in recovered_users
+                if existing_user.email == effective_email
+            ),
+            None,
+        )
+        if recovered_by_email is not None:
+            return str(recovered_by_email.id)
+
+        raise
