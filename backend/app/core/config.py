@@ -81,6 +81,32 @@ class Settings(BaseSettings):
             return value.strip().lower()
         return value
 
+    @field_validator(
+        "DATABASE_URL",
+        "ALEMBIC_DATABASE_URL",
+        "SUPABASE_URL",
+        "SUPABASE_ANON_KEY",
+        "SUPABASE_JWT_SECRET",
+        "GEMINI_API_KEY",
+        "GEMINI_MODEL",
+        "GEMINI_REPORT_MODEL",
+        "ELEVENLABS_API_KEY",
+        "ELEVENLABS_VOICE_ID",
+        "ELEVENLABS_MODEL_ID",
+        "ELEVENLABS_OUTPUT_FORMAT",
+        "PUBLIC_BACKEND_URL",
+        "BACKEND_CORS_ORIGINS",
+        "VERCEL_URL",
+        "DEV_USER_EMAIL",
+        "DEV_USER_ID",
+        mode="before",
+    )
+    @classmethod
+    def normalize_string_values(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
     @field_validator("ALLOWED_ORIGINS", mode="before")
     @classmethod
     def normalize_allowed_origins(cls, value):
